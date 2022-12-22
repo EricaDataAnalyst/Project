@@ -1,0 +1,697 @@
+Conclusion regarding choosing the final model:
+For this project, I made two models for prediction: a logistic model and a tuning random forest model.
+
+As the firm wished to have strong predicting power over people who will respond positively to offers, this model evaluation will focus more on classifying yes and no responses precisely to identify which promotion triggers customer responses. In this case, the final evaluation metric will be accuracy and area under curve to see the predicting strength. 
+
+------------------------------------------------------
+               Accuracy                 ROC_AUC
+RF Tuning     0.8750000                0.8594815
+Logistic      0.8407738                0.6643638
+
+------------------------------------------------------
+Even though the logistic model contains less variables than RF tuning, the RF tuning outperforms in both accuracy and auc. Thus, the RF tuning becomes the final model and used for prediction. 
+
+# load libraries / install packages
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(skimr)
+library(kableExtra)
+library(GGally)
+library(kableExtra) 
+library(vip)        
+library(fastshap)   
+library(MASS)
+library(ISLR)
+library(tree)
+library(dplyr)
+library(ggplot2)
+library(imputeMissings)
+library(readxl)
+library(writexl)
+#install.packages("factoextra")
+library(factoextra)
+library(rpart.plot)
+
+```
+
+
+# Read AND clean Data
+
+```{r, warning=FALSE, message=FALSE}
+mkt <- read_csv("C:/Users/16179/Downloads/my_R_Project/marketing_campaign.csv")%>% clean_names()
+
+head(mkt) 
+
+test <- read_csv("C:/Users/16179/Downloads/my_R_Project/new_customers_mkt.csv")%>% clean_names()
+
+head(test)
+
+mkt = subset(mkt, select= -id )
+
+head(mkt)
+
+skim(mkt)
+skim(test)
+
+```
+#overview of amt spent
+```{r, warning=FALSE, message=FALSE}
+mkt_ovw<- mkt%>%
+  mutate(sum_meat = sum(meat))%>%
+  mutate(sum_fish = sum(fish))%>%
+  mutate(sum_gold = sum(gold))%>%
+  mutate(sum_sweet = sum(sweets))%>%
+  mutate(sum_wines = sum(wines))
+mkt_ovw
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+
+mkt$income[is.na(mkt$income)]<- median(mkt$income, na.rm =TRUE)
+
+
+# create dummy variables for categorical variable class
+#education
+mkt$education_grad <- ifelse(mkt$education == 'Graduation', 1, 0)
+mkt$education_phd <- ifelse(mkt$education == 'PhD', 1, 0)
+mkt$education_master <- ifelse(mkt$education == 'Master', 1, 0)
+
+#mar_stat
+mkt$mar_stat_Single <- ifelse(mkt$mar_stat  == 'Single', 1, 0)
+mkt$mar_stat_Partner <- ifelse(mkt$mar_stat == 'Partner', 1, 0)
+mkt$mar_stat_Married <- ifelse(mkt$mar_stat == 'Married', 1, 0)
+mkt$mar_stat_Divorce <- ifelse(mkt$mar_stat == 'Divorce', 1, 0)
+
+
+
+#convert dt_customer into date
+formatted_t1 <- as.Date(mkt$dt_customer, format = "%d-%m-%Y")
+formatted_t2 <- as.Date(mkt$dt_customer, format = "%d/%m/%Y")
+mkt$dt_customer <- as.Date(ifelse(is.na(formatted_t1), formatted_t2, formatted_t1), origin = "1970-01-01")
+
+
+
+#standardize numeric variables
+
+mkt$income_s <- scale(mkt$income)
+#mkt$birth_s <- scale(mkt$birth)
+mkt$kids_s <- scale(mkt$kids)
+mkt$teens_s <- scale(mkt$teens)
+mkt$recency_s <- scale(mkt$recency)
+mkt$wines_s <- scale(mkt$	wines)
+mkt$fruits_s <- scale(mkt$ fruits)
+mkt$meat_s <- scale(mkt$meat)
+mkt$fish_s <- scale(mkt$fish)
+mkt$gold_s <- scale(mkt$gold)
+mkt$sweets_s <- scale(mkt$sweets)
+mkt$deals_s <- scale(mkt$	deals)
+mkt$web_s <- scale(mkt$	web)
+mkt$catalog_s <- scale(mkt$	catalog)
+mkt$store_s <- scale(mkt$	store)
+mkt$visits_s <- scale(mkt$ visits)
+mkt$cmp3_s <- scale(mkt$ cmp3)
+mkt$cmp4_s <- scale(mkt$ cmp4)
+mkt$cmp5_s <- scale(mkt$ cmp5)
+mkt$cmp1_s <- scale(mkt$ cmp1)
+mkt$cmp2_s <- scale(mkt$ cmp2)
+mkt$cmplain_s <- scale(mkt$ cmplain)
+mkt$days_s <- scale(Sys.Date() - mkt$dt_customer)
+
+
+mkt %>%
+  skim()
+
+# remove redundant and rejected variables
+mktfin = subset(mkt, select= -c(education, mar_stat,dt_customer,z_cost, z_rev, income, birth, teens, kids,recency,wines, fruits,  meat, fish, gold,  sweets, deals,web, catalog, store, visits, cmp3, cmp4, cmp5, cmp1, cmp2, cmplain, response)) 
+
+
+head(mktfin)
+
+```
+
+# visually choose number of clusters
+
+```{r, warning=FALSE, message=FALSE}
+
+# how many clusters
+
+fviz_nbclust(mktfin, kmeans, method="wss")
+
+```
+
+
+# build clusters
+#I will use 6 as for starting point
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(20)
+
+clusters7 <- kmeans(mktfin, 6, iter.max = 200, nstart = 5)
+print(clusters7)
+
+# visualize clusters
+
+f<-fviz_cluster(clusters7,mktfin,ellipse.type="norm",geom="point")
+mkt<-mkt%>%
+  mutate(cluster=clusters7[["cluster"]])
+tdm<-mkt%>%
+  group_by(cluster)%>%
+  summarise(mean_dm = mean(visits_s))
+f
+
+```
+
+# explore clusters
+
+```{r, warning=FALSE, message=FALSE}
+
+cluster <- as.factor(clusters7$cluster)
+
+clusters7
+
+#determine which variables are driving the cluster creation
+
+tree.clusters=tree(cluster~.,mktfin)
+
+
+summary(tree.clusters)
+plot(tree.clusters)
+text(tree.clusters,pretty=1)
+tree.clusters
+
+```
+#create age variable
+```{r, warning=FALSE, message=FALSE}
+mkt%>%
+  mutate(age = 2022- birth)%>%
+  ggplot(aes(age))+geom_bar()
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+  
+
+ggplot(mkt,aes(x=income))+geom_histogram(binwidth=1000)+
+  coord_cartesian(xlim=c(0,200000))
+ggplot(mkt,aes(x=income))+geom_histogram(binwidth=1000) + facet_wrap(~clusters7$cluster)+
+  coord_cartesian(xlim=c(0,200000))
+
+ggplot(mkt,aes(x=birth))+geom_histogram(binwidth=5)
+ggplot(mkt,aes(x=birth))+geom_histogram(binwidth=5) + facet_wrap(~clusters7$cluster)
+
+
+
+ggplot(mkt,aes(x=kids))+geom_histogram(binwidth=10000)
+ggplot(mkt,aes(x=kids))+geom_histogram(binwidth=10000) + facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(x=teens))+geom_histogram(binwidth=10000)
+ggplot(mkt,aes(x=teens))+geom_histogram(binwidth=10000) + facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(x=recency))+geom_histogram(binwidth=1)
+ggplot(mkt,aes(x=recency))+geom_histogram(binwidth=1) + facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(x=wines))+geom_histogram(binwidth=1)
+ggplot(mkt,aes(x=wines))+geom_histogram(binwidth=1) + facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(fruits))+geom_bar()
+ggplot(mkt,aes(fruits))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(mkt,aes(meat))+geom_bar()
+ggplot(mkt,aes(meat))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(fish))+geom_bar()
+ggplot(mkt,aes(fish))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(mkt,aes(gold))+geom_bar()
+ggplot(mkt,aes(gold))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(mkt,aes(sweets))+geom_bar()
+ggplot(mkt,aes(sweets))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(deals))+geom_bar()
+ggplot(mkt,aes(deals))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(web))+geom_bar()
+ggplot(mkt,aes(web))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(catalog))+geom_bar()
+ggplot(mkt,aes(catalog))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(store))+geom_bar()
+ggplot(mkt,aes(store))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(visits))+geom_bar()
+ggplot(mkt,aes(visits))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(mkt,aes(cmp1))+geom_bar()
+ggplot(mkt,aes(cmp1))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(mkt,aes(cmp2))+geom_bar()
+ggplot(mkt,aes(cmp2))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(mkt,aes(cmp3))+geom_bar()
+ggplot(mkt,aes(cmp3))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(mkt,aes(cmp4))+geom_bar()
+ggplot(mkt,aes(cmp4))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(mkt,aes(cmp5))+geom_bar()
+ggplot(mkt,aes(cmp5))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(mkt,aes(cmplain))+geom_bar()
+ggplot(mkt,aes(cmplain))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+
+ggplot(mkt,aes(response))+geom_bar()
+ggplot(mkt,aes(response))+geom_bar()+facet_wrap(~clusters7$cluster)
+#+ labels(paste0(rounded , "%"))
+
+
+
+```
+
+```{r,warning=FALSE, message=FALSE}
+res<- mkt%>%
+  group_by(cluster, response)%>%
+   summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+res
+
+```
+
+
+#pct of channel breakdown
+```{r,warning=FALSE, message=FALSE}
+pct_channel <- mkt %>%
+  mutate(all = sum(web,catalog, store))%>%
+  mutate(pct_web = sum(web)/all)%>%
+  mutate(pct_catalog = sum(catalog)/all)%>%
+  mutate(pct_store = sum(store)/all)
+
+pct_channel
+
+```
+
+
+#pct of responses 
+```{r,warning=FALSE, message=FALSE}
+mkt %>%
+  ggplot(aes(x=response)) +
+  geom_histogram(stat="count") +
+  labs(title = "How many customers response to last offer")
+
+mkt %>%
+  group_by(response) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+```
+#convert to factor levels
+```{r, warning=FALSE, message=FALSE}
+mkt %>%
+    mutate_if(is.character, factor)%>%
+    mutate(response =  as.factor(response)) -> mkt_prep
+
+head(mkt_prep)
+
+```
+
+
+## Partition your data 70/30 (train / test split) 
+```{r}
+# -- set a random seed for repeatablity 
+set.seed(123)
+
+# -- performs our train / test split 
+mkt_split <- initial_split(mkt_prep, prop = 0.7)
+
+# -- extract the training data 
+mkt_train <- training(mkt_split)
+# -- extract the test data 
+mkt_test <- testing(mkt_split)
+
+sprintf("Train PCT : %1.2f%%", nrow(mkt_train)/ nrow(mkt) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(mkt_test)/ nrow(mkt) * 100)
+
+head(mkt_train)
+
+```
+
+#create recipe for model
+```{r, warning=FALSE, message=FALSE}
+ 
+mkt_recipe <- recipe(response ~ dt_customer+
+                                  birth+
+                                mar_stat_Single+
+                                mar_stat_Partner+
+                        mar_stat_Married+
+                       mar_stat_Divorce+ 
+                       education_grad+ 
+                       education_phd+
+                       education_master+
+                                    income+
+                                    kids+
+                                    teens+
+                                    recency+
+                                    wines+
+                                    fruits+
+                                    meat+
+                                    fish+
+                                    sweets+
+                                    gold+
+                                    deals+
+                                    web+
+                                    catalog+
+                                    store+
+                                    visits+
+                                    cmp3+
+                                    cmp1+
+                                    cmp2+
+                                    cmp4+
+                                    cmp5+
+                                    
+                                    cmplain
+                  
+                       , data = mkt_train) %>%
+  step_impute_median(all_numeric_predictors()) %>% 
+  step_mutate(cust_days = Sys.Date() - dt_customer ) %>% 
+  step_mutate(age = 2022 - birth ) %>% 
+  step_rm(dt_customer, birth) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  prep()
+
+mkt_recipe
+
+```
+
+## Bake recipe
+```{r, warning=FALSE, message=FALSE}
+# -- apply the recipe 
+bake_train <- bake(mkt_recipe, new_data = mkt_train)
+skim(bake_train)
+bake_test  <- bake(mkt_recipe, new_data = mkt_test)
+
+```
+
+## Fit a random forest model using ranger engine defaults
+
+```{r, warning=FALSE, message=FALSE}
+rand1 <- rand_forest(mtry=3, min_n=10, trees=100, mode = "classification") %>%
+                      set_engine("ranger", importance="impurity") %>%
+                      fit(response ~ ., data = bake_train)
+
+rand1$fit
+
+
+```
+
+# set up the model for tuning
+```{r, warning=FALSE, message=FALSE}
+rf_mod <-
+  rand_forest(mtry = tune(), trees=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+
+#set up a resampling strategy
+
+set.seed(1234)
+
+mkt_rs <- bootstraps(bake_train, times=10)
+
+#set up controls
+
+ctrl <- control_grid(verbose = FALSE, save_pred = TRUE)
+
+
+```
+##  Execute with a formula
+
+```{r, warning=FALSE, message=FALSE}
+
+roc_vals <- metric_set(roc_auc)
+
+formula_res <-
+  rf_mod %>%
+  tune_grid(
+    response ~ .,
+    resamples = mkt_rs,
+    grid = 3,
+    metrics = roc_vals,
+    control = ctrl
+  )
+
+
+
+estimates <- collect_metrics(formula_res)
+estimates
+
+show_best(formula_res, metric = "roc_auc")
+
+```
+## Prep for Evaluation (random forest)
+
+
+```{r, warning=FALSE, message=FALSE}
+
+# -- training 
+predict(rand1, bake_train, type = "prob") %>%
+  bind_cols(.,predict(rand1, bake_train)) %>%
+  bind_cols(.,bake_train) -> scored_train_forest
+
+head(scored_train_forest)
+
+# -- testing 
+predict(rand1, bake_test, type = "prob") %>%
+  bind_cols(.,predict(rand1, bake_test)) %>%
+  bind_cols(.,bake_test) -> scored_test_forest
+
+head(scored_test_forest)
+```
+
+## Evaluate default forest
+
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = FALSE)
+
+# -- AUC: Train and Test 
+scored_train_forest %>% 
+  metrics(response, .pred_1, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_forest %>% 
+               metrics(response, .pred_1, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+  
+
+
+# -- Variable Importance top 10 features  
+rand1 %>%
+  vip(num_features = 15)
+
+# -- ROC Charts 
+scored_train_forest %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_forest %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(response, .pred_1) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_forest %>%
+  conf_mat(response, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_forest %>%
+  conf_mat(response, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+
+
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+#test = subset(test, select= -id )
+
+
+test$income[is.na(test$income)]<- median(test$income, na.rm =TRUE)
+
+
+# create dummy variables for categorical variable class
+#education
+test$education_grad <- ifelse(test$education == 'Graduation', 1, 0)
+test$education_phd <- ifelse(test$education == 'PhD', 1, 0)
+test$education_master <- ifelse(test$education == 'Master', 1, 0)
+
+#mar_stat
+test$mar_stat_Single <- ifelse(test$mar_stat  == 'Single', 1, 0)
+test$mar_stat_Partner <- ifelse(test$mar_stat == 'Partner', 1, 0)
+test$mar_stat_Married <- ifelse(test$mar_stat == 'Married', 1, 0)
+test$mar_stat_Divorce <- ifelse(test$mar_stat == 'Divorce', 1, 0)
+
+#convert dt_customer into date
+formatted_t3 <- as.Date(test$dt_customer, format = "%d-%m-%Y")
+formatted_t4 <- as.Date(test$dt_customer, format = "%d/%m/%Y")
+test$dt_customer <- as.Date(ifelse(is.na(formatted_t3), formatted_t4, formatted_t3), origin = "1970-01-01")
+
+skim(test)
+
+```
+
+## Prepare new mkt data by applying the recipe
+
+```{r, warning=FALSE, message=FALSE}
+bake_new <- bake(mkt_recipe, new_data = test)
+
+```
+
+## Score new mkt data
+```{r, warning=FALSE, message=FALSE}
+final_fit <- bind_cols(predict(rand1,bake_new),test) %>%
+  dplyr::select(id,predicted_response = .pred_class ) 
+
+final_fit %>% 
+  write_xlsx("Scored_New_mkt_Customers_final.xlsx")
+```
+
+
+
+## Interpret with a logistic regression or tree 
+
+```{r, warning=FALSE, message=FALSE}
+# create model with variables identified as most important above
+
+logit_mod <- glm(response ~ cust_days+ 
+                   #age+
+                   cmplain+
+                   recency + 
+                   wines +
+                   meat+ 
+                   income + 
+                   gold + 
+                   cmp5 + 
+                  # birth + 
+                   catalog+ 
+                   fruits+ 
+                   cmp1+ 
+                   fish+ 
+                   visits+ 
+                   sweets+ 
+                   store+ 
+                   mar_stat_Single+
+                   mar_stat_Partner+
+                   mar_stat_Married+
+                   mar_stat_Divorce+ 
+                   education_grad+ 
+                   education_phd+
+                   education_master, 
+                 data=bake_train, family=binomial(link="logit"))
+summary(logit_mod)
+coefficients(logit_mod)
+
+
+
+```
+
+### -  try a diff tree 
+```{r, warning=FALSE, message=FALSE}
+mkt_tree2 <- decision_tree(mode="classification",
+                            cost_complexity = 0.0001,
+                            tree_depth = 10,
+                            min_n = 2) %>%
+                  set_engine("rpart") %>%
+                  fit(response ~ ., data=bake_train)
+
+mkt_tree2$fit
+
+options(scipen = 0)
+
+rpart.plot(mkt_tree2$fit, roundint=FALSE, extra=3)
+
+```
+
+## Prep for Evaluation (mkt tree)
+
+
+```{r, warning=FALSE, message=FALSE}
+
+# -- training 
+predict(mkt_tree2, bake_train, type = "prob") %>%
+  bind_cols(.,predict(mkt_tree2, bake_train)) %>%
+  bind_cols(.,bake_train) -> scored_train_tree
+
+head(scored_train_tree)
+
+# -- testing 
+predict(mkt_tree2, bake_test, type = "prob") %>%
+  bind_cols(.,predict(mkt_tree2, bake_test)) %>%
+  bind_cols(.,bake_test) -> scored_test_tree
+
+head(scored_test_tree)
+``` 
+
+## Evaluate
+
+
+```{r, warning=FALSE, message=FALSE}
+
+options(yardstick.event_first = FALSE)
+# -- AUC: Train and Test 
+scored_train_tree %>% 
+  metrics(response, .pred_1, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_tree %>% 
+               metrics(response, .pred_1, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+  
+
+
+# -- Variable Importance top 10 features  
+mkt_tree2 %>%
+  vip(num_features = 5)
+
+# -- ROC Charts 
+scored_train_tree %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_tree %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(response, .pred_1) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_tree %>%
+  conf_mat(response, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_tree %>%
+  conf_mat(response, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+```
+
+
+
+
+
+
+
+
