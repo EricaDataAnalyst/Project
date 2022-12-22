@@ -1,0 +1,373 @@
+
+#Load libraries
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(skimr)
+library(kableExtra)
+library(GGally)
+library(kableExtra) 
+library(vip)        # --  tidymodels variable importance
+library(fastshap)   # -- shapley values for variable importance 
+library(MASS)
+```
+
+
+#Import dataset
+```{r, message=FALSE, warning=FALSE}
+
+
+unidata <-read_csv("C:/Users/16179/Downloads/my_R_Project/churn_training.csv") %>%
+  clean_names()
+
+head(unidata) 
+
+```
+#Data summary/overview
+```{r, message=FALSE, warning=FALSE}
+
+unidata%>%
+  skim()
+
+  
+
+```
+
+#Explore enrollment balance
+```{r, message=FALSE, warning=FALSE}
+unidata%>%
+  ggplot(aes(x=churn))+
+  geom_histogram(stat="count")+
+  labs("Enrollment Count: Yes and No")
+
+pct_exam <- unidata%>%
+  group_by(churn)%>%
+  summarize(n=n())%>%
+  ungroup()%>%
+  mutate(pct = n/sum(n))
+pct_exam
+```
+
+#Explore Boxplots of all numeric and barchart for categorical
+```{r, message=FALSE, warning=FALSE}
+
+unidata$churn <- as.factor(unidata$churn)
+unidata$phone_model <- as.factor(unidata$phone_model)
+unidata$partner <- as.factor(unidata$partner)
+unidata$phone_service <- as.factor(unidata$phone_service)
+unidata$phone_area_code <- as.factor(unidata$phone_area_code)
+unidata$streaming_plan <- as.factor(unidata$streaming_plan)
+unidata$multiple_lines <- as.factor(unidata$multiple_lines)
+unidata$device_protection <- as.factor(unidata$device_protection)
+unidata$billing_state <- as.factor(unidata$billing_state)
+unidata$paperless_billing <- as.factor(unidata$paperless_billing)
+unidata$payment_method <- as.factor(unidata$payment_method)
+unidata$network_speed <- as.factor(unidata$network_speed)
+unidata$mobile_hotspot <- as.factor(unidata$mobile_hotspot)
+unidata$wifi_calling_text <- as.factor(unidata$wifi_calling_text)
+unidata$online_backup <- as.factor(unidata$online_backup)
+unidata$gender <- as.factor(unidata$gender)
+
+unidata$contract_code <- as.factor(unidata$contract_code)
+unidata$currency_code <- as.factor(unidata$currency_code)
+unidata$maling_code <- as.factor(unidata$maling_code)
+unidata$email_domain<- as.factor(unidata$email_domain)
+
+```
+#commercial household income,campus visit count,self-initiated contact count,total contact count, excurricular interest, mail qualify score, attendence to campus event
+
+
+#set seed for datasets
+```{r, warning=FALSE}
+set.seed(999)
+
+uni_split <- initial_split(unidata, prop = 0.7)
+
+uni_train <- training(uni_split)
+uni_test <- testing(uni_split)
+
+sprintf("Train PCT : %1.2f%%", nrow(uni_train)/ nrow(unidata) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(uni_test)/ nrow(unidata) * 100)
+
+```
+
+#2. Recipe
+#Drop all rejected variables from model and some variables with more than 20% missing values 
+```{r, warning=FALSE}
+uni_recipe <- recipe(churn~ email_domain+ monthly_minutes + total_billed+ customer_service_calls+ mobile_hotspot+ late_payments+
+multiple_lines+ currency_code+ phone_model+ streaming_minutes + prev_balance+ payment_method+  phone_area_code + paperless_billing+ number_phones+ streaming_plan, 
+data= uni_train)%>%
+  
+  step_impute_median(all_numeric_predictors()) %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_scale(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())%>%
+
+  prep()
+
+uni_recipe
+
+   
+ 
+```
+
+
+#apply recipe to two data sets
+```{r, warning=FALSE}
+bake_train <- bake(uni_recipe, new_data = uni_train)
+  skim(bake_train)
+bake_test  <- bake(uni_recipe, new_data = uni_test)
+  skim(bake_test)
+
+```
+
+
+```{r, warning=FALSE}
+logistic_uni <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(churn ~ ., data = bake_train)
+
+
+tidy(logistic_uni) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+
+```{r, warning=FALSE}
+# -- training 
+predict(logistic_uni, bake_train, type = "prob") %>%
+  bind_cols(.,predict(logistic_uni, bake_train)) %>%
+  bind_cols(.,bake_train) -> scored_train_uni
+
+head(scored_train_uni)
+
+# -- testing 
+predict(logistic_uni, bake_test, type = "prob") %>%
+  bind_cols(.,predict(logistic_uni, bake_test)) %>%
+  bind_cols(.,bake_test) -> scored_test_uni
+
+head(scored_test_uni)
+```
+
+
+```{r, warning=FALSE}
+options(yardstick.event_first=FALSE)
+
+scored_train_uni %>% 
+  metrics(churn, .pred_1, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows(scored_test_uni %>% 
+               metrics(churn, .pred_1, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+
+
+# -- Variable Importance top 10 features  
+logistic_uni %>%
+  vip(num_features = 50)
+
+
+# -- ROC Charts 
+scored_train_uni %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_uni %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(churn, .pred_1) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_uni %>%
+  conf_mat(churn, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_uni %>%
+  conf_mat(churn, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+```
+
+```{r, warning=FALSE}
+steplog <- glm(churn ~ ., data = bake_train, family=binomial(link="logit"))
+step <- stepAIC(steplog, direction="both")
+summary(step)
+
+
+```
+
+```{r, warning=FALSE}
+## -- Use tidymodel framework to fit and evaulate reduced model
+
+
+
+uni_steprecipe <- recipe(enroll ~ campus_visit+premiere+stuemail+instate+interest+init_span+int1rat+int2rat+hscrat, data = uni_train) %>%
+  prep()
+
+uni_steprecipe
+
+
+# -- apply new recipe 
+bake_steptrain <- bake(uni_steprecipe, new_data = uni_train)
+bake_steptest  <- bake(uni_steprecipe, new_data = uni_test)
+
+logistic_step1 <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(enroll ~ ., data = bake_steptrain)
+
+
+## -- check out your parameter estimates ... 
+tidy(logistic_step1) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+```{r, warning=FALSE}
+
+# -- training predictions from stepwise model
+predict(logistic_step1, bake_steptrain, type = "prob") %>%
+  bind_cols(.,predict(logistic_step1, bake_steptrain)) %>%
+  bind_cols(.,bake_steptrain) -> scored_train_step1
+
+head(scored_train_step1)
+
+# -- testing predictions from stepwise model
+predict(logistic_step1, bake_steptest , type = "prob") %>%
+  bind_cols(.,predict(logistic_step1, bake_steptest )) %>%
+  bind_cols(.,bake_steptest ) -> scored_test_step1
+
+head(scored_test_step1)
+
+```
+```{r, warning=FALSE}
+# -- Evaluate Stepwise Model
+# -- AUC: Train and Test 
+options(yardstick.event_first=FALSE)
+scored_train_step1 %>% 
+  metrics(enroll, .pred_1, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_step1 %>% 
+               metrics(enroll, .pred_1, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  )
+
+
+
+# -- ROC Charts 
+scored_train_step1 %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_step1 %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(enroll, .pred_1) %>%
+  autoplot()
+
+```
+```{r}
+# -- Confustion Matricies  
+scored_train_step1 %>%
+  conf_mat(enroll, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_step1 %>%
+  conf_mat(enroll, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+
+
+
+
+
+```
+```{r, warning=FALSE}
+
+
+
+
+uni_step_2_recipe <- recipe(enroll ~ campus_visit+premiere+interest+instate+init_span+int1rat+int2rat+hscrat, data = uni_train) %>%
+  prep()
+
+uni_step_2_recipe
+
+
+# -- apply new recipe 
+bake_steptrain_2 <- bake(uni_step_2_recipe, new_data = uni_train)
+bake_steptest_2  <- bake(uni_step_2_recipe, new_data = uni_test)
+
+logistic_step2 <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(enroll ~ ., data = bake_steptrain_2)
+
+
+## -- check out your parameter estimates ... 
+tidy(logistic_step2) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+```{r, warning=FALSE}
+
+predict(logistic_step2, bake_steptrain_2, type = "prob") %>%
+  bind_cols(.,predict(logistic_step2, bake_steptrain_2)) %>%
+  bind_cols(.,bake_steptrain_2) -> scored_train_step2
+
+head(scored_train_step2)
+
+predict(logistic_step2, bake_steptest_2 , type = "prob") %>%
+  bind_cols(.,predict(logistic_step2, bake_steptest_2 )) %>%
+  bind_cols(.,bake_steptest_2 ) -> scored_test_step2
+
+head(scored_test_step2)
+
+```
+
+
+```{r, warning=FALSE}
+# -- Evaluate Model
+
+options(yardstick.event_first=FALSE)
+
+scored_train_step2 %>% 
+  metrics(enroll, .pred_1, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_step2 %>% 
+               metrics(enroll, .pred_1, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  )
+
+
+
+# -- ROC Charts 
+scored_train_step2 %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_step2 %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(enroll, .pred_1) %>%
+  autoplot()
+
+```
+
+
+```{r}
+# -- Confusion Matrices  
+scored_train_step2 %>%
+  conf_mat(enroll, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_step2 %>%
+  conf_mat(enroll, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+
+```
