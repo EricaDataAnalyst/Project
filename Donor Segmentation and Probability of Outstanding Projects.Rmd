@@ -1,0 +1,673 @@
+---
+title: "Project_4"
+author: "EricaWan"
+date: "2022-11-30"
+output: html_document
+---
+ 
+
+# load libraries / install packages
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(skimr)
+library(kableExtra)
+library(GGally)
+library(kableExtra) 
+library(vip)        
+library(fastshap)   
+library(MASS)
+library(ISLR)
+library(tree)
+library(dplyr)
+library(ggplot2)
+library(imputeMissings)
+library(readxl)
+library(writexl)
+#install.packages("factoextra")
+library(factoextra)
+library(rpart.plot)
+```
+
+
+# Read data 
+```{r, warning=FALSE, message=FALSE}
+donationn <- read_csv("C:/Users/16179/Downloads/my_R_Project/Donations.csv")%>% clean_names()
+head(donationn) 
+skim(donationn)
+
+donor <- read_csv("C:/Users/16179/Downloads/my_R_Project/DonorMerge_Final.csv")%>% clean_names()
+head(donor)
+skim(donor)
+
+```
+
+
+#Inner join two data sets
+#Remove unique identifers
+#skim 
+#Remove variables with more than 10% missing values
+#Remove categorical variables with too many levels of data
+```{r, warning=FALSE, message=FALSE}
+donation <- donationn%>%
+  inner_join(donor, by=c("projectid" = "projectid")) %>%
+  dplyr::select(-projectid, -teacher_acctid, -schoolid, -school_ncesid, -donationid, -donor_acctid, -donation_timestamp,-donor_zip, 
+                -donor_city, -donor_state, -donation_message,  -school_metro,-school_city, -school_state, -school_district, -school_county, -date_posted, -primary_focus_subject, 
+                -great_messages_proportion, -teacher_referred_count, -non_teacher_referred_count, -one_non_teacher_referred_donor_g, -secondary_focus_subject, -secondary_focus_area, -school_zip )
+
+
+skim(donation)
+head(donation)
+
+
+
+```
+
+#Exploratory analysis:
+#1. pct of is_excitings 
+```{r,warning=FALSE, message=FALSE}
+donation %>%
+  ggplot(aes(x=is_exciting)) +
+  geom_histogram(stat="count") +
+  labs(title = "How many project is exciting")
+
+donation %>%
+  group_by(is_exciting) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+```
+
+
+#scale data for further clustering
+```{r, warning=FALSE, message=FALSE}
+
+dontation_s <- donation
+
+#fulfillment_labor_materials
+dontation_s$fulfillment_labor_materials[is.na(dontation_s$fulfillment_labor_materials)]<- median(dontation_s$fulfillment_labor_materials, na.rm =TRUE)
+#students_reached
+dontation_s$students_reached[is.na(dontation_s$students_reached)]<- median(dontation_s$students_reached, na.rm =TRUE)
+
+#primary_focus_area
+dontation_s$primary_focus_area[is.na(dontation_s$primary_focus_area)]<- mode(dontation_s$primary_focus_area)
+#resource_type
+dontation_s$resource_type[is.na(dontation_s$resource_type)]<- mode(dontation_s$resource_type)
+#grade_level
+dontation_s$grade_level[is.na(dontation_s$grade_level)]<- mode(dontation_s$grade_level)
+
+
+#logical variables
+#is_teacher_acct
+dontation_s$is_teacher_acct_T <- ifelse(dontation_s$is_teacher_acct == 'TRUE', 1, 0)
+dontation_s$is_teacher_acct_F <- ifelse(dontation_s$is_teacher_acct == 'FALSE', 1, 0)
+
+#donation_included_optional_support
+dontation_s$donation_included_optional_support_T <- ifelse(dontation_s$donation_included_optional_support == 'TRUE', 1, 0)
+dontation_s$donation_included_optional_support_F <- ifelse(dontation_s$donation_included_optional_support == 'FALSE', 1, 0)
+
+#payment_included_acct_credit
+dontation_s$payment_included_acct_credit_T <- ifelse(dontation_s$payment_included_acct_credit == 'TRUE', 1, 0)
+dontation_s$payment_included_acct_creditt_F <- ifelse(dontation_s$payment_included_acct_credit == 'FALSE', 1, 0)
+
+
+#payment_included_campaign_gift_card
+dontation_s$payment_included_campaign_gift_card_T <- ifelse(dontation_s$payment_included_campaign_gift_card == 'TRUE', 1, 0)
+dontation_s$payment_included_campaign_gift_card_F <- ifelse(dontation_s$payment_included_campaign_gift_card == 'FALSE', 1, 0)
+
+#payment_included_web_purchased_gift_card
+dontation_s$payment_included_web_purchased_gift_card_T <- ifelse(dontation_s$payment_included_web_purchased_gift_card == 'TRUE', 1, 0)
+dontation_s$payment_included_web_purchased_gift_card_F <- ifelse(dontation_s$payment_included_web_purchased_gift_card == 'FALSE', 1, 0)
+
+#payment_was_promo_matched
+dontation_s$payment_was_promo_matched_T <- ifelse(dontation_s$payment_was_promo_matched == 'TRUE', 1, 0)
+dontation_s$payment_was_promo_matched_F <- ifelse(dontation_s$payment_was_promo_matched == 'FALSE', 1, 0)
+
+#via_giving_page
+dontation_s$via_giving_page_T <- ifelse(dontation_s$via_giving_page == 'TRUE', 1, 0)
+dontation_s$via_giving_page_F <- ifelse(dontation_s$via_giving_page == 'FALSE', 1, 0)
+
+
+#for_honoree
+dontation_s$for_honoree_T <- ifelse(dontation_s$for_honoree == 'TRUE', 1, 0)
+dontation_s$for_honoree_F <- ifelse(dontation_s$for_honoree == 'FALSE', 1, 0)
+
+
+
+#school_charter
+dontation_s$school_charter_T <- ifelse(dontation_s$school_charter == 'TRUE', 1, 0)
+dontation_s$school_charter_F <- ifelse(dontation_s$school_charter == 'FALSE', 1, 0)
+
+#school_magnet
+dontation_s$school_magnet_T <- ifelse(dontation_s$school_magnet == 'TRUE', 1, 0)
+dontation_s$school_magnet_F <- ifelse(dontation_s$school_magnet == 'FALSE', 1, 0)
+
+#school_year_round
+dontation_s$school_year_round_T <- ifelse(dontation_s$school_year_round == 'TRUE', 1, 0)
+dontation_s$school_year_round_F <- ifelse(dontation_s$school_year_round == 'FALSE', 1, 0)
+
+#school_nlns
+dontation_s$school_nlns_T <- ifelse(dontation_s$school_nlns == 'TRUE', 1, 0)
+dontation_s$school_nlns_F <- ifelse(dontation_s$school_nlns == 'FALSE', 1, 0)
+
+#school_kipp
+dontation_s$school_kipp_T <- ifelse(dontation_s$school_kipp == 'TRUE', 1, 0)
+dontation_s$school_kipp_F <- ifelse(dontation_s$school_kipp == 'FALSE', 1, 0)
+
+#school_charter_ready_promise
+dontation_s$school_charter_ready_promise_T <- ifelse(dontation_s$school_charter_ready_promise == 'TRUE', 1, 0)
+dontation_s$school_charter_ready_promise_F <- ifelse(dontation_s$school_charter_ready_promise == 'FALSE', 1, 0)
+
+#teacher_teach_for_america
+dontation_s$teacher_teach_for_america_T <- ifelse(dontation_s$teacher_teach_for_america == 'TRUE', 1, 0)
+dontation_s$teacher_teach_for_america_F <- ifelse(dontation_s$teacher_teach_for_america == 'FALSE', 1, 0)
+
+#teacher_ny_teaching_fellow
+dontation_s$teacher_ny_teaching_fellow_T <- ifelse(dontation_s$teacher_ny_teaching_fellow == 'TRUE', 1, 0)
+dontation_s$teacher_ny_teaching_fellow_F <- ifelse(dontation_s$teacher_ny_teaching_fellow == 'FALSE', 1, 0)
+
+#eligible_double_your_impact_matc
+dontation_s$eligible_double_your_impact_matc_T <- ifelse(dontation_s$eligible_double_your_impact_matc == 'TRUE', 1, 0)
+dontation_s$eligible_double_your_impact_matc_F <- ifelse(dontation_s$eligible_double_your_impact_matc == 'FALSE', 1, 0)
+
+#eligible_almost_home_match
+dontation_s$eligible_almost_home_match_T <- ifelse(dontation_s$eligible_almost_home_match == 'TRUE', 1, 0)
+dontation_s$eligible_almost_home_match_F <- ifelse(dontation_s$eligible_almost_home_match == 'FALSE', 1, 0)
+
+
+# create dummy variables for categorical variable class
+#dollar_amount
+
+dontation_s$dollar_amount_10_to_100 <- ifelse(dontation_s$dollar_amount == '10_to_100', 1, 0)
+dontation_s$dollar_amount_under_10 <- ifelse(dontation_s$dollar_amount == 'under_10', 1, 0)
+dontation_s$dollar_amount_100_and_up <- ifelse(dontation_s$dollar_amount == '100_and_up', 1, 0)
+
+
+#payment method
+dontation_s$payment_method_no_cash_received <- ifelse(dontation_s$payment_method  == 'no_cash_received', 1, 0)
+dontation_s$payment_method_paypal <- ifelse(dontation_s$payment_method == 'paypal', 1, 0)
+dontation_s$payment_method_creditcard <- ifelse(dontation_s$payment_method == 'creditcard', 1, 0)
+dontation_s$payment_method_amazon <- ifelse(dontation_s$payment_method == 'amazon', 1, 0)
+dontation_s$payment_method_promo_code_match <- ifelse(dontation_s$payment_method  == 'promo_code_match', 1, 0)
+dontation_s$payment_method_check <- ifelse(dontation_s$payment_method == 'check', 1, 0)
+dontation_s$payment_method_almost_home_match <- ifelse(dontation_s$payment_method == 'almost_home_match', 1, 0)
+dontation_s$payment_method_double_your_impact_match <- ifelse(dontation_s$payment_method == 'double_your_impact_match', 1, 0)
+
+
+#teacher prefix
+dontation_s$teacher_prefix_Mrs. <- ifelse(dontation_s$teacher_prefix == 'Mrs.', 1, 0)
+dontation_s$teacher_prefix_Ms. <- ifelse(dontation_s$teacher_prefix == 'Ms.', 1, 0)
+dontation_s$teacher_prefix_Mr. <- ifelse(dontation_s$teacher_prefix == 'Mr.', 1, 0)
+
+
+#primary_focus_area
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area  == 'Literacy & Language', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area == 'History & Civics', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area == 'Math & Science', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area == 'Music & The Arts', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area  == 'Health & Sports', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area == 'Special Needs', 1, 0)
+dontation_s$primary_focus_area <- ifelse(dontation_s$primary_focus_area == 'Applied Learning', 1, 0)
+
+#resource_type
+dontation_s$resource_type_Technology <- ifelse(dontation_s$resource_type  == 'Technology', 1, 0)
+dontation_s$resource_type_Supplies <- ifelse(dontation_s$resource_type == 'Supplies', 1, 0)
+dontation_s$resource_type_Other <- ifelse(dontation_s$resource_type == 'Other', 1, 0)
+dontation_s$resource_type_Books <- ifelse(dontation_s$resource_type == 'Books', 1, 0)
+dontation_s$resource_type_Trips <- ifelse(dontation_s$resource_type  == 'Trips', 1, 0)
+dontation_s$resource_type_Visitors <- ifelse(dontation_s$resource_type == 'Visitors', 1, 0)
+
+#poverty_level
+dontation_s$poverty_level <- ifelse(dontation_s$poverty_level  == 'highest poverty', 1, 0)
+dontation_s$poverty_level <- ifelse(dontation_s$poverty_level == '	
+moderate poverty', 1, 0)
+dontation_s$poverty_level <- ifelse(dontation_s$poverty_level == '	
+low poverty
+', 1, 0)
+dontation_s$poverty_level <- ifelse(dontation_s$poverty_level == '	
+low poverty
+', 1, 0)
+
+
+#grade_level
+dontation_s$grade_level <- ifelse(dontation_s$grade_level  == '	
+Grades 3-5', 1, 0)
+dontation_s$grade_level <- ifelse(dontation_s$grade_level == '	
+Grades 9-12', 1, 0)
+dontation_s$grade_level <- ifelse(dontation_s$grade_level == '	
+Grades 6-8', 1, 0)
+dontation_s$grade_level <- ifelse(dontation_s$grade_level == '	
+Grades PreK-2', 1, 0)
+
+
+
+#standardize numeric variables
+
+dontation_s$donation_to_project_s <- scale(dontation_s$donation_to_project)
+dontation_s$donation_optional_support_s <- scale(dontation_s$donation_optional_support)
+
+dontation_s$donation_total_s <- scale(dontation_s$donation_total)
+dontation_s$school_latitude_s <- scale(dontation_s$	school_latitude)
+dontation_s$school_longitude_s <- scale(dontation_s$ school_longitude)
+dontation_s$fulfillment_labor_materials_s <- scale(dontation_s$	fulfillment_labor_materials)
+dontation_s$total_price_excluding_optional_s_s <- scale(dontation_s$total_price_excluding_optional_s)
+dontation_s$total_price_including_optional_s_s <- scale(dontation_s$total_price_including_optional_s)
+dontation_s$students_reached_s <- scale(dontation_s$students_reached)
+
+
+
+
+# remove redundant and rejected variables
+donationfin = subset(dontation_s, select= -c(donation_to_project, donation_total, donation_optional_support, school_latitude, school_longitude,  fulfillment_labor_materials, total_price_excluding_optional_s, total_price_including_optional_s, students_reached, is_teacher_acct, donation_included_optional_support, payment_included_acct_credit, payment_included_campaign_gift_card,payment_included_web_purchased_gift_card, payment_was_promo_matched, via_giving_page, for_honoree, school_charter, school_magnet, school_year_round, school_nlns, school_kipp, school_charter_ready_promise, teacher_teach_for_america, teacher_ny_teaching_fellow, eligible_double_your_impact_matc, eligible_almost_home_match, dollar_amount,payment_method,teacher_prefix,primary_focus_area,resource_type,poverty_level, grade_level
+)) 
+
+head(donationfin)
+skim(donationfin)
+
+```
+
+
+
+# build clusters
+#I will use 5 as for starting point
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(20)
+
+clusters7 <- kmeans(donationfin, 4, iter.max = 200, nstart = 4)
+print(clusters7)
+
+# visualize clusters
+
+f<-fviz_cluster(clusters7,donationfin,ellipse.type="norm",geom="point")
+dontation_s%>%
+  mutate(clusters=clusters7[["cluster"]])
+
+dontation_s%>%
+  group_by(clusters7$cluster)%>%
+  summarise(mean_dm = mean(donation_to_project_s))
+f
+
+```
+
+
+# explore clusters
+```{r, warning=FALSE, message=FALSE}
+
+cluster <- as.factor(clusters7$cluster)
+
+clusters7
+
+#determine which variables are driving the cluster creation
+
+tree.clusters=tree(cluster~.,donationfin)
+
+
+summary(tree.clusters)
+plot(tree.clusters)
+text(tree.clusters,pretty=1)
+tree.clusters
+
+```
+
+
+
+#visual clusters
+```{r, warning=FALSE, message=FALSE}
+
+ggplot(dontation_s,aes(x=donation_to_project))+geom_histogram(binwidth=10000)+
+  coord_cartesian(xlim=c(0,85000))
+ggplot(dontation_s,aes(x=donation_to_project))+geom_histogram(binwidth=10000) + facet_wrap(~clusters7$cluster)+
+  coord_cartesian(xlim=c(0,85000))
+
+ggplot(dontation_s,aes(x=donation_total))+geom_histogram(binwidth=10000)+
+  coord_cartesian(xlim=c(0,100000))
+ggplot(dontation_s,aes(x=donation_total))+geom_histogram(binwidth=10000) + facet_wrap(~clusters7$cluster)+
+  coord_cartesian(xlim=c(0,100000))
+ggplot(dontation_s,aes(x=donation_optional_support))+geom_histogram(binwidth=1000)+
+  coord_cartesian(xlim=c(0,15000))
+ggplot(dontation_s,aes(x=donation_optional_support))+geom_histogram(binwidth=10000) + facet_wrap(~clusters7$cluster)+
+  coord_cartesian(xlim=c(0,15000))
+ggplot(dontation_s,aes(x=school_latitude))+geom_histogram()+
+  coord_cartesian(xlim=c(0,68))
+ggplot(dontation_s,aes(x=school_latitude))+geom_histogram() + facet_wrap(~clusters7$cluster)+
+  coord_cartesian(xlim=c(0,68))
+
+
+
+ggplot(dontation_s,aes(x=fulfillment_labor_materials))+geom_histogram()
+ggplot(dontation_s,aes(x=fulfillment_labor_materials))+geom_histogram()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(dontation_s,aes(x=is_teacher_acct))+geom_bar()
+ggplot(dontation_s,aes(x=is_teacher_acct))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(dontation_s,aes(x=donation_included_optional_support))+geom_bar()
+ggplot(dontation_s,aes(x=donation_included_optional_support))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(dontation_s,aes(x=payment_included_acct_credit))+geom_bar()
+ggplot(dontation_s,aes(x=payment_included_acct_credit))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(dontation_s,aes(payment_included_campaign_gift_card))+geom_bar()
+ggplot(dontation_s,aes(payment_included_campaign_gift_card))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(dontation_s,aes(payment_included_web_purchased_gift_card))+geom_bar()
+ggplot(dontation_s,aes(payment_included_web_purchased_gift_card))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+ggplot(dontation_s,aes(payment_was_promo_matched))+geom_bar()
+ggplot(dontation_s,aes(payment_was_promo_matched))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(dontation_s,aes(via_giving_page))+geom_bar()
+ggplot(dontation_s,aes(via_giving_page))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(for_honoree))+geom_bar()
+ggplot(dontation_s,aes(for_honoree))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_charter))+geom_bar()
+ggplot(dontation_s,aes(school_charter))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_magnet))+geom_bar()
+ggplot(dontation_s,aes(school_magnet))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_year_round))+geom_bar()
+ggplot(dontation_s,aes(school_year_round))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_nlns))+geom_bar()
+ggplot(dontation_s,aes(school_nlns))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_kipp))+geom_bar()
+ggplot(dontation_s,aes(school_kipp))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(school_charter_ready_promise))+geom_bar()
+ggplot(dontation_s,aes(school_charter_ready_promise))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(teacher_teach_for_america))+geom_bar()
+ggplot(dontation_s,aes(teacher_teach_for_america))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(teacher_ny_teaching_fellow))+geom_bar()
+ggplot(dontation_s,aes(teacher_ny_teaching_fellow))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(eligible_double_your_impact_matc))+geom_bar()
+ggplot(dontation_s,aes(eligible_double_your_impact_matc))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(eligible_almost_home_match))+geom_bar()
+ggplot(dontation_s,aes(eligible_almost_home_match))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(dollar_amount))+geom_bar()
+ggplot(dontation_s,aes(dollar_amount))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(payment_method))+geom_bar()
+ggplot(dontation_s,aes(payment_method))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(eligible_almost_home_match))+geom_bar()
+ggplot(dontation_s,aes(eligible_almost_home_match))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(teacher_prefix))+geom_bar()
+ggplot(dontation_s,aes(teacher_prefix))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(primary_focus_area))+geom_bar()
+ggplot(dontation_s,aes(primary_focus_area))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(resource_type))+geom_bar()
+ggplot(dontation_s,aes(resource_type))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(poverty_level))+geom_bar()
+ggplot(dontation_s,aes(poverty_level))+geom_bar()+facet_wrap(~clusters7$cluster)
+ggplot(dontation_s,aes(grade_level))+geom_bar()
+ggplot(dontation_s,aes(grade_level))+geom_bar()+facet_wrap(~clusters7$cluster)
+
+
+ggplot(dontation_s,aes(is_exciting))+geom_bar()
+ggplot(dontation_s,aes(is_exciting))+geom_bar()+facet_wrap(~clusters7$cluster)
+#+ labels(paste0(rounded , "%"))
+
+```
+
+```{r,warning=FALSE, message=FALSE}
+res<- dontation_s%>%
+  group_by(clusters7$cluster, is_exciting)%>%
+   summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+res
+
+```
+
+
+#convert to factor levels
+```{r, warning=FALSE, message=FALSE}
+donation %>%
+    mutate_if(is.character, factor)%>%
+    mutate_if(is.logical, as.factor)%>%
+    mutate(is_exciting =  as.factor(is_exciting)) -> donation_prep
+
+head(donation_prep)
+
+```
+
+#first partition: since the data set is too big to run, I select 80% of data set
+```{r, warning=FALSE, message=FALSE}
+# -- set a random seed for repeatablity 
+set.seed(123)
+
+# -- performs our train / donor split 
+donation_split_pp <- initial_split(donation_prep, prop = 0.8)
+
+# -- extract the training data 
+donation_train_pp <- training(donation_split_pp)
+
+donation_test_pp <- testing(donation_split_pp)
+
+sprintf("Train PCT : %1.2f%%", nrow(donation_train_pp)/ nrow(donation) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(donation_test_pp)/ nrow(donation) * 100)
+
+head(donation_train_pp)
+
+```
+
+
+## Partition your data 70/30 (train / test split) 
+```{r, warning=FALSE, message=FALSE}
+# -- set a random seed for repeatablity 
+set.seed(123)
+
+# -- performs our train / donor split 
+donation_split <- initial_split(donation_train_pp, prop = 0.7)
+
+# -- extract the training data 
+donation_train <- training(donation_split)
+# -- extract the donor data 
+donation_test <- testing(donation_split)
+
+sprintf("Train PCT : %1.2f%%", nrow(donation_train)/ nrow(donation) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(donation_test)/ nrow(donation) * 100)
+
+head(donation_train)
+skim(donation_train)
+```
+
+#examine relationship between numeric variables 
+```{r, warning=FALSE, message=FALSE}
+numeric_subset <- na.omit(subset(donation, select = c(donation_to_project, donation_total, donation_optional_support, school_latitude, school_longitude, fulfillment_labor_materials, total_price_excluding_optional_s, total_price_including_optional_s, students_reached, is_teacher_acct, donation_included_optional_support, payment_included_acct_credit)))
+skim(numeric_subset)
+
+cormat <- cor(numeric_subset)
+round(cormat, 2)
+
+```
+
+#create recipe for model
+```{r, warning=FALSE, message=FALSE}
+ 
+donation_recipe <- recipe(is_exciting ~ .
+                       , data = donation_train) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_impute_mode(all_nominal_predictors())%>%
+  step_scale(all_numeric())%>%
+  step_novel(all_nominal_predictors())%>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)%>%
+  prep()
+
+donation_recipe
+
+```
+
+## Bake recipe
+```{r, warning=FALSE, message=FALSE}
+# -- apply the recipe 
+bake_train <- bake(donation_recipe, new_data = donation_train)
+skim(bake_train)
+bake_test  <- bake(donation_recipe, new_data = donation_test)
+
+```
+
+
+
+## Interpret with a logistic regression or tree 
+
+#first model
+```{r, warning=FALSE, message=FALSE}
+logistic_re <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(is_exciting ~ ., data = bake_train)
+
+
+tidy(logistic_re) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# -- training 
+predict(logistic_re, bake_train, type = "prob") %>%
+  bind_cols(.,predict(logistic_re, bake_train)) %>%
+  bind_cols(.,bake_train) -> scored_train_log
+
+head(scored_train_log)
+
+# -- testing 
+predict(logistic_re, bake_test, type = "prob") %>%
+  bind_cols(.,predict(logistic_re, bake_test)) %>%
+  bind_cols(.,bake_test) -> scored_test_log
+
+head(scored_test_log)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = FALSE)
+
+scored_train_log %>% 
+  metrics(is_exciting, .pred_TRUE, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_train_log %>% 
+               metrics(is_exciting, .pred_TRUE, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+
+
+# -- Variable Importance top 10 features  
+logistic_re %>%
+  vip(num_features = 10)
+
+
+# -- ROC Charts 
+scored_train_log %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_log %>%
+              mutate(model="bake_test")) %>%
+  group_by(model) %>%
+  roc_curve(is_exciting, .pred_TRUE) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_log %>%
+  conf_mat(is_exciting, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_log %>%
+  conf_mat(is_exciting, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+```
+
+
+
+### -  try a diff tree 
+```{r, warning=FALSE, message=FALSE}
+donation_tree2 <- decision_tree(mode="classification",
+                            cost_complexity = 0.0001,
+                            tree_depth = 8,
+                            min_n = 10) %>%
+                  set_engine("rpart") %>%
+                  fit(is_exciting ~.
+, data=bake_train)
+
+
+
+donation_tree2$fit
+
+options(scipen = 0)
+
+rpart.plot(donation_tree2$fit, fallen.leaves = TRUE, roundint=FALSE,cex = 0.4, extra=3)
+
+```
+
+## Prep for Evaluation (donation tree)
+
+```{r, warning=FALSE, message=FALSE}
+
+# -- training 
+predict(donation_tree2, bake_train, type = "prob") %>%
+  bind_cols(.,predict(donation_tree2, bake_train)) %>%
+  bind_cols(.,bake_train) -> scored_train_tree
+
+head(scored_train_tree)
+
+# -- testing 
+predict(donation_tree2, bake_test, type = "prob") %>%
+  bind_cols(.,predict(donation_tree2, bake_test)) %>%
+  bind_cols(.,bake_test) -> scored_test_tree
+
+head(scored_test_tree)
+``` 
+
+
+
+# Evaluate
+```{r, warning=FALSE, message=FALSE}
+
+options(yardstick.event_first = FALSE)
+# -- AUC: Train and Test 
+scored_train_tree %>% 
+  metrics(is_exciting, .pred_TRUE, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_tree %>% 
+               metrics(is_exciting, .pred_TRUE, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+  
+
+
+# -- Variable Importance top 10 features  
+donation_tree2 %>%
+  vip(num_features = 5)
+
+# -- ROC Charts 
+scored_train_tree %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_tree %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(is_exciting, .pred_TRUE) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_tree %>%
+  conf_mat(is_exciting, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_tree %>%
+  conf_mat(is_exciting, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+```
+
+
+
+
+
+
