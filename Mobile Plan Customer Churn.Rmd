@@ -1,0 +1,224 @@
+# Import Libraries 
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(kknn)
+```
+
+# Import Data
+
+```{r, warning=FALSE, message=FALSE}
+churn <- read_csv("C:/Users/16179/Downloads/my_R_Project/churn_training.csv") %>% clean_names()
+
+churn_kaggle <- read_csv("C:/Users/16179/Downloads/my_R_Project/churn_holdout.csv") %>% clean_names()
+
+churn %>% 
+  head()
+
+
+
+```
+
+# Evaluate Target 
+
+```{r, warning=FALSE, message=FALSE}
+churn_summary <- churn %>%
+  count(churn) %>%
+  mutate(pct = n/sum(n))
+
+
+churn_summary %>%
+  ggplot(aes(x=factor(churn),y=pct)) +
+  geom_col()  + 
+  geom_text(aes(label = round(pct*100,1)) , vjust = 2.5, colour = "white") + 
+  labs(title="Overall Churn Rate", x="Churn", y="PCT")
+
+churn %>%
+  ggplot(aes(x=customer_service_calls, fill=factor(churn))) +
+  geom_histogram(bins=25) +
+  labs(title="Number of customer service calls with Churn", x="Number of Customer Service Call", y="Count")
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+churn %>% skimr::skim_to_wide()
+```
+
+## Prepare data 
+```{r, warning=FALSE, message=FALSE}
+churn <- churn %>% 
+  mutate(churn = as.factor(churn),
+         senior_citizen = as.factor(senior_citizen) ) %>%
+  mutate_if(is.character, factor)%>%
+  mutate(billing_postal = as.numeric(billing_postal))
+
+
+churn_kaggle<- churn_kaggle %>% 
+  mutate(senior_citizen= as.factor(senior_citizen) ) %>%
+  mutate_if(is.character, factor)%>%
+  mutate(billing_postal = as.numeric(billing_postal))
+
+```
+  
+
+
+
+```{r, warning=FALSE, message=FALSE}
+# -- set a random seed for repeatablity 
+set.seed(999)
+
+# -- performs our train / test split 
+split <- initial_split(churn, prop = 0.7)
+
+# -- extract the training data form our bananna split 
+train <- training(split)
+# -- extract the test data 
+test <- testing(split)
+
+sprintf("Train PCT : %1.2f%%", nrow(train)/ nrow(churn) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(test)/ nrow(churn) * 100)
+```
+
+```{r, warning=FALSE, message=FALSE}
+model_recipe <- recipe(churn ~ email_domain+ monthly_minutes + total_billed+  late_payments+ partner+ streaming_minutes + prev_balance+ payment_method+ paperless_billing+ streaming_plan + customer_service_calls
+, data=train ) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_scale(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) 
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+knn_model <- nearest_neighbor(neighbors = 5 ) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+```
+
+```{r, warning=FALSE, message=FALSE}
+knn_workflow <- workflow() %>%
+  add_recipe(model_recipe) %>%
+  add_model(knn_model) %>%
+  fit(train)
+knn_workflow
+```
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = FALSE) 
+# -- score training  
+  predict(knn_workflow, train, type="prob") %>%
+    bind_cols(predict(knn_workflow, train, type="class")) %>%
+    bind_cols(.,train)-> scored_train 
+
+  # -- score testing 
+  predict(knn_workflow, test, type="prob") %>%
+      bind_cols(predict(knn_workflow,  test, type="class")) %>%
+       bind_cols(., test) -> scored_test  
+  
+  scored_train %>% 
+    metrics(churn, .pred_1, estimate = .pred_class) %>%
+    mutate(part="training") %>%
+    bind_rows( scored_test %>% 
+                 metrics(churn, .pred_1, estimate = .pred_class) %>%
+                 mutate(part="testing") ) %>%
+    filter(.metric %in% c('accuracy','roc_auc')) %>%
+    pivot_wider(names_from = .metric, values_from=.estimate)
+  
+  scored_train %>%
+  conf_mat(
+  truth = churn,
+  estimate = .pred_class,
+  dnn = c("Prediction", "Truth")) %>%
+  autoplot(type = "heatmap") + 
+  labs(title="Training Confusion Matrix")
+
+scored_test %>%
+  conf_mat(
+  truth = churn,
+  estimate = .pred_class,
+  dnn = c("Prediction", "Truth")) %>%
+  autoplot(type = "heatmap") + 
+  labs(title="Testing Confusion Matrix")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+predict(knn_workflow, churn_kaggle, type="prob") %>%
+       bind_cols(., churn_kaggle) %>%
+  dplyr::select(customer_id, churn=.pred_1)-> kaggle_prediction
+
+
+kaggle_prediction %>% 
+  write_csv("challenge_1_benchmark.csv")
+```
+
+#2nd model
+```{r, warning=FALSE, message=FALSE}
+knn_model_2 <- nearest_neighbor(neighbors = 10 ) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+```
+
+```{r, warning=FALSE, message=FALSE}
+knn_workflow_2 <- workflow() %>%
+  add_recipe(model_recipe) %>%
+  add_model(knn_model_2) %>%
+  fit(train)
+knn_workflow_2
+```
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = FALSE) 
+# -- score training  
+  predict(knn_workflow_2, train, type="prob") %>%
+    bind_cols(predict(knn_workflow_2, train, type="class")) %>%
+    bind_cols(.,train)-> scored_train_2 
+
+  # -- score testing 
+  predict(knn_workflow_2, test, type="prob") %>%
+      bind_cols(predict(knn_workflow_2,  test, type="class")) %>%
+       bind_cols(., test) -> scored_test_2  
+  
+  scored_train_2 %>% 
+    metrics(churn, .pred_1, estimate = .pred_class) %>%
+    mutate(part="training") %>%
+    bind_rows( scored_test_2 %>% 
+                 metrics(churn, .pred_1, estimate = .pred_class) %>%
+                 mutate(part="testing") ) %>%
+    filter(.metric %in% c('accuracy','roc_auc')) %>%
+    pivot_wider(names_from = .metric, values_from=.estimate)
+  
+  scored_train_2 %>%
+  conf_mat(
+  truth = churn,
+  estimate = .pred_class,
+  dnn = c("Prediction", "Truth")) %>%
+  autoplot(type = "heatmap") + 
+  labs(title="Training Confusion Matrix")
+
+scored_test_2 %>%
+  conf_mat(
+  truth = churn,
+  estimate = .pred_class,
+  dnn = c("Prediction", "Truth")) %>%
+  autoplot(type = "heatmap") + 
+  labs(title="Testing Confusion Matrix")
+
+
+#predict(knn_workflow, test, type="prob") %>% 
+#  mutate(.pred_class = as.factor(if_else(.pred_1 >= 0.5,1,0))) %>%
+#  bind_cols(test %>% select(churn)) %>%
+#  recall(churn,.pred_class, event_level = "second")
+```
+
+```{r, warning=FALSE, message=FALSE}
+predict(knn_workflow_2, churn_kaggle, type="prob") %>%
+       bind_cols(., churn_kaggle) %>%
+   dplyr::select(customer_id, churn=.pred_1)-> kaggle_prediction_2
+
+
+kaggle_prediction_2 %>% 
+  write_csv("challenge_1_best_benchmark.csv")
+```
