@@ -1,0 +1,604 @@
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)   # tidyverse 
+library(tidymodels)  # modeling interface 
+library(janitor)     # clean_names() 
+library(skimr)       # profiling 
+library(vip)         # variable importance 
+library(dplyr)
+library(kableExtra)
+library(GGally)
+library(fastshap)  
+library(MASS)
+```
+
+## Import Data
+```{r, warning=FALSE, message=FALSE}
+fraud <- read_csv("C:/Users/16179/Downloads/my_R_Project/project_2_training.csv")
+fraud_kaggle <- read_csv("C:/Users/16179/Downloads/my_R_Project/project_2_holdout.csv")%>%
+head()
+fraud %>% skimr::skim_to_wide()
+
+fraud%>% print(fraud)
+#Are numeric variables categorical
+#missing rate of 
+#n_unique
+#whitespace
+```
+
+
+
+# Evaluate Target 
+
+```{r, warning=FALSE, message=FALSE}
+fraud_summary <- fraud %>%
+  count(EVENT_LABEL) %>%
+  mutate(pct = n/sum(n))
+
+
+fraud_summary %>%
+  ggplot(aes(x=factor(EVENT_LABEL),y=pct)) +
+  geom_col()  + 
+  geom_text(aes(label = round(pct*100,1)) , vjust = 2.5, colour = "white") + 
+  labs(title="Overall	EVENT_LABEL Rate", x="EVENT_LABEL", y="PCT")
+
+fraud %>%
+  ggplot(aes(x=transaction_amt, fill=factor(EVENT_LABEL))) +
+  geom_histogram(bins=25) +
+  labs(title="transaction_amt with fraud", x="transaction_amt", y="fraud status")
+
+fraud %>%
+  ggplot(aes(x=days_since_last_logon, fill=factor(EVENT_LABEL))) +
+  geom_histogram(bins=50) +
+  labs(title="days_since_last_logon with fraud", x="days_since_last_logon", y="fraud status")
+
+fraud %>%
+  ggplot(aes(x=historic_velocity, fill=factor(EVENT_LABEL))) +
+  geom_histogram(bins=50) +
+  labs(title="historic_velocity with fraud", x="historic_velocity", y="fraud status")
+
+
+
+
+
+```
+
+#prepare variables& test email domain
+```{r, warning=FALSE, message=FALSE}
+fraud_1 <- fraud %>%
+  dplyr::select(-billing_city, -billing_address, -ip_address, -phone_number, -EVENT_TIMESTAMP, -merchant_id, -locale, -user_agent,  -billing_state, -EVENT_ID, -applicant_name) %>%
+  mutate(EVENT_LABEL = as.factor(EVENT_LABEL)) %>%
+  mutate_if(is.character,factor)
+ 
+
+fraud_kaggle_1 <- fraud_kaggle %>%
+  mutate_if(is.character,factor)
+
+```
+
+
+
+#split data into train& test sets
+```{r, warning=FALSE, message=FALSE}
+set.seed(999)
+
+split <- initial_split(fraud_1, prop = 0.7)
+
+# -- extract the training data form our banana split 
+train <- training(split)
+test <- testing(split)
+
+sprintf("Train PCT : %1.2f%%", nrow(train)/ nrow(fraud_1) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(test)/ nrow(fraud_1) * 100)
+```
+
+#2. Recipe
+#Drop unique identifer variables from model& categorical variables with too much levels
+
+
+```{r, warning=FALSE, message=FALSE}
+m1_recipe <- recipe(EVENT_LABEL~ account_age_days + 
+                      transaction_amt + 
+                      transaction_adj_amt+ 
+                      historic_velocity+ 
+                      cvv+ 
+                      card_bin+ 
+                      currency + 
+                      transaction_type+ 
+                      transaction_env+ 
+                      tranaction_initiate+ 
+                      days_since_last_logon+ 
+                      inital_amount+ 
+                      email_domain+
+                      signature_image,
+                    
+                    data=train)%>%
+  step_center(all_numeric_predictors()) %>%
+  step_impute_mode(all_nominal(), -all_outcomes()) %>%
+  step_impute_median(all_numeric_predictors()) %>% 
+  step_novel(all_nominal_predictors()) %>%         
+#  themis::step_downsample(event_label, under_ratio = 3) %>% 
+  step_unknown(all_nominal_predictors()) %>%       
+  step_other(all_nominal_predictors(),threshold = 0.1) %>%  
+#  step_dummy(all_nominal_predictors(), one_hot = TRUE)%>%
+  
+
+  prep()
+
+
+m1_recipe
+
+```
+
+
+#apply recipe to two data sets
+```{r, warning=FALSE, message=FALSE}
+bake_train_1 <- bake(m1_recipe , new_data = train)
+  skim(bake_train_1)
+bake_test_1  <- bake(m1_recipe, new_data = test)
+  skim(bake_test_1)
+
+```
+#first model
+```{r, warning=FALSE, message=FALSE}
+logistic_fraud <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(EVENT_LABEL ~ ., data = bake_train_1)
+
+
+tidy(logistic_fraud) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# -- training 
+predict(logistic_fraud, bake_train_1, type = "prob") %>%
+  bind_cols(.,predict(logistic_fraud, bake_train_1)) %>%
+  bind_cols(.,bake_train_1) -> scored_train_fraud
+
+head(scored_train_fraud)
+
+# -- testing 
+predict(logistic_fraud, bake_test_1, type = "prob") %>%
+  bind_cols(.,predict(logistic_fraud, bake_test_1)) %>%
+  bind_cols(.,bake_test_1) -> scored_test_fraud
+
+head(scored_test_fraud)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = TRUE)
+
+scored_train_fraud %>% 
+  metrics(EVENT_LABEL, .pred_fraud, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_fraud %>% 
+               metrics(EVENT_LABEL, .pred_fraud, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  ) 
+
+
+# -- Variable Importance top 10 features  
+logistic_fraud %>%
+  vip(num_features = 10)
+
+
+# -- ROC Charts 
+scored_train_fraud %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_fraud %>%
+              mutate(model="bake_test_1")) %>%
+  group_by(model) %>%
+  roc_curve(EVENT_LABEL, .pred_fraud) %>%
+  autoplot()
+
+
+# -- Confustion Matricies  
+scored_train_fraud %>%
+  conf_mat(EVENT_LABEL, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_fraud %>%
+  conf_mat(EVENT_LABEL, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+```
+
+
+
+#2nd stepwise model
+```{r, warning=FALSE, message=FALSE}
+steplog <- glm(EVENT_LABEL ~ account_age_days + 
+                      transaction_amt + 
+                      transaction_adj_amt+ 
+                      historic_velocity+ 
+                      cvv+ 
+                      card_bin+ 
+                      currency + 
+                      transaction_type+ 
+                      transaction_env+ 
+                      tranaction_initiate+ 
+                      days_since_last_logon+ 
+                      email_domain+
+                      inital_amount, data = bake_train_1, family=binomial(link="logit"))
+step <- stepAIC(steplog, direction="both")
+summary(step)
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+## -- Use tidymodel framework to fit and evaulate reduced model
+fraud_steprecipe <- recipe(EVENT_LABEL ~ account_age_days + 
+                      transaction_amt + 
+                      transaction_adj_amt+ 
+                      historic_velocity+ 
+                      cvv+ 
+                      currency + 
+                      transaction_type+
+                      email_domain+
+                      transaction_env,
+                      data = bake_train_1) %>%
+  prep()
+
+fraud_steprecipe
+
+
+# -- apply new recipe 
+bake_steptrain <- bake(fraud_steprecipe, new_data = bake_train_1)
+bake_steptest  <- bake(fraud_steprecipe, new_data = bake_test_1)
+
+logistic_step1 <-logistic_reg(mode = "classification") %>%
+                  set_engine("glm") %>%
+                  fit(EVENT_LABEL ~ ., data = bake_steptrain)
+
+
+## -- check out your parameter estimates ... 
+tidy(logistic_step1) %>%
+  mutate_at(c("estimate", "std.error", "statistic", "p.value"),round, 4)
+
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+# -- training predictions from stepwise model
+predict(logistic_step1, bake_steptrain, type = "prob") %>%
+  bind_cols(.,predict(logistic_step1, bake_steptrain)) %>%
+  bind_cols(.,bake_steptrain) -> scored_train_step1
+
+head(scored_train_step1)
+
+# -- testing predictions from stepwise model
+predict(logistic_step1, bake_steptest , type = "prob") %>%
+  bind_cols(.,predict(logistic_step1, bake_steptest )) %>%
+  bind_cols(.,bake_steptest ) -> scored_test_step1
+
+head(scored_test_step1)
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# -- Evaluate Stepwise Model
+# -- AUC: Train and Test 
+options(yardstick.event_first=TRUE)
+scored_train_step1 %>% 
+  metrics(EVENT_LABEL, .pred_fraud, estimate = .pred_class) %>%
+  mutate(part="training") %>%
+  bind_rows( scored_test_step1 %>% 
+               metrics(EVENT_LABEL, .pred_fraud, estimate = .pred_class) %>%
+               mutate(part="testing") 
+  )
+
+
+
+# -- ROC Charts 
+scored_train_step1 %>%
+  mutate(model = "train") %>%
+  bind_rows(scored_test_step1 %>%
+              mutate(model="test")) %>%
+  group_by(model) %>%
+  roc_curve(EVENT_LABEL, .pred_fraud) %>%
+  autoplot()
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# -- Confustion Matricies  
+scored_train_step1 %>%
+  conf_mat(EVENT_LABEL, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Train Confusion Matrix")
+
+scored_test_step1 %>%
+  conf_mat(EVENT_LABEL, .pred_class) %>%
+  autoplot( type = "heatmap") +
+  labs(title="Test Confusion Matrix")
+
+```
+
+## Partition for random forest
+```{r, warning=FALSE, message=FALSE}
+fraud_rd <- fraud %>%
+  mutate(EVENT_LABEL = as.factor(EVENT_LABEL)) %>%
+  mutate_if(is.character,factor)
+
+kaggle <- fraud_kaggle %>%
+  mutate_if(is.character,factor)
+
+# -- set a random seed for repeatable 
+set.seed(43)
+
+# -- performs our train / test split 
+split_2 <- initial_split(fraud_rd, prop = 0.7)
+
+# -- extract the training data form our banana split 
+train_rd <- training(split_2)
+# -- extract the test data 
+test_rd <- testing(split_2)
+
+sprintf("Train PCT : %1.2f%%", nrow(train_rd)/ nrow(fraud) * 100)
+sprintf("Test  PCT : %1.2f%%", nrow(test_rd)/ nrow(fraud) * 100)
+```
+
+
+## Recipe 
+
+```{r, warning=FALSE, message=FALSE}
+model_recipe <- recipe(EVENT_LABEL ~ 
+                         account_age_days + 
+                         transaction_amt + 
+                         transaction_adj_amt + 
+                         historic_velocity + 
+                         transaction_type+
+                        days_since_last_logon+
+                         	inital_amount+
+                         transaction_env+
+                          tranaction_initiate+
+                         signature_image+
+                      #   card_bin+
+                      #   cvv+
+                         currency
+,data = train_rd) %>% 
+  step_impute_median(all_numeric_predictors()) %>% # replace numeric missing values 
+  step_novel(all_nominal_predictors()) %>%         # handle new levels 
+#  themis::step_downsample(event_label, under_ratio = 3) %>% 
+  step_unknown(all_nominal_predictors()) %>%       # replace category missing values 
+  step_other(all_nominal_predictors(),threshold = 0.1) %>%  # pool rarely occuring levels 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) # onehot encode 
+
+bake(model_recipe %>% prep(), train_rd %>% sample_n(1000))
+  
+```
+
+
+## Model & Workflow 
+
+```{r, warning=FALSE, message=FALSE}
+rf_model <- rand_forest(trees = 500, min_n = 50) %>%
+   set_mode("classification") %>%
+   set_engine("ranger", num.threads = 5, max.depth = 30, importance="permutation")
+
+rf_workflow <- workflow() %>%
+  add_recipe(model_recipe) %>%
+  add_model(rf_model) %>%
+  fit(train_rd)
+
+rf_workflow
+```
+
+
+## Evaluation 
+
+```{r, warning=FALSE, message=FALSE}
+options(yardstick.event_first = TRUE)
+# score training
+predict(rf_workflow, train_rd, type = "prob") %>%
+  bind_cols(predict(rf_workflow, train_rd, type = "class")) %>%
+  mutate(part = "train") %>%
+  bind_cols(., train_rd) -> scored_train
+
+# -- score testing
+predict(rf_workflow, test, type = "prob") %>%
+  bind_cols(predict(rf_workflow,  test_rd, type = "class")) %>%
+  mutate(part = "testing") %>%
+  bind_cols(., test_rd) -> scored_test
+
+## Metrics (AUC / Accuracy / Log Loss)
+bind_rows (scored_train, scored_test)  %>%
+  group_by(part) %>%
+  metrics(EVENT_LABEL, .pred_fraud, estimate = .pred_class) %>%
+  filter(.metric %in% c('accuracy', 'roc_auc', 'mn_log_loss')) %>%
+  pivot_wider(names_from = .metric, values_from = .estimate)
+
+# precision @0.5
+bind_rows(scored_train, scored_test) %>%
+  group_by(part) %>%
+  precision(EVENT_LABEL, .pred_class)
+# recall @0.5
+bind_rows(scored_train, scored_test) %>%
+  group_by(part) %>%
+  recall(EVENT_LABEL, .pred_class)
+
+# ROC Curve  
+bind_rows(scored_train, scored_test) %>%
+  group_by(part) %>%
+  roc_curve(EVENT_LABEL, .pred_fraud) %>%
+  autoplot() +
+  geom_vline(xintercept = 0.05, # 5% FPR 
+             color = "red",
+             linetype = "longdash") +
+  geom_vline(xintercept = 0.25,   # 25% FPR 
+             color = "blue",
+             linetype = "longdash") +
+  geom_vline(xintercept = 0.75,   # 75% FPR 
+             color = "green",
+             linetype = "longdash") +
+  labs(title = "RF ROC Curve" , x = "FPR(1 - specificity)", y = "TPR(recall)") 
+
+# histogram of probablyt of fraud 
+scored_test %>%
+  ggplot(aes(.pred_fraud, fill = EVENT_LABEL)) +
+  geom_histogram(bins = 50) +
+  geom_vline(xintercept = 0.5, color = "red") +
+  labs(
+    title = paste("Distribution of the Probabilty of FRAUD:", "RF Model") ,
+    x = ".pred_fraud",
+    y = "count"
+  ) 
+
+# operating range 0 - 10% 
+operating_range <- scored_test %>%
+  roc_curve(EVENT_LABEL, .pred_fraud)  %>%
+  mutate(
+    fpr = round((1 - specificity), 2),
+    tpr = round(sensitivity, 3),
+    score_threshold =  round(.threshold, 3)
+  ) %>%
+  group_by(fpr) %>%
+  summarise(threshold = round(mean(score_threshold),3),
+            tpr = mean(tpr)) %>%
+  filter(fpr <= 0.1)
+# operating range table 
+operating_range
+
+## What is the precision at 5% false positive rate? 
+scored_test %>%
+  mutate(fpr_5_pct = as.factor(if_else(.pred_fraud >= 0.131,"fraud","legit"))) %>% 
+  precision(EVENT_LABEL, fpr_5_pct)
+  
+
+# function to find precision at threshold
+precision_funk <- function(threshold){
+  scored_test %>%
+  mutate(fpr_5_pct = as.factor(if_else(.pred_fraud >= threshold,"fraud","legit"))) %>% 
+  precision(EVENT_LABEL, fpr_5_pct) %>%
+  recall(EVENT_LABEL, fpr_5_pct)%>%
+  print()
+
+    
+}
+
+#why does this precision funk exist? 
+#precision_funk(threshold = 0.131)
+
+rf_workflow %>%
+  extract_fit_parsnip() %>%
+  vip()
+  
+```
+
+## Kaggle 
+
+```{r, warning=FALSE, message=FALSE}
+predict(rf_workflow, kaggle, type = "prob")  %>%
+  bind_cols(kaggle) %>%
+  dplyr::select(EVENT_ID,EVENT_LABEL = .pred_fraud)%>%
+  write_csv("kaggle2.csv")
+```
+
+## How i might analyze email_domain
+
+and what i might do... so there are too many levels for email domain to justify doing dummy encoding... 
+
+1st - see if there is any predictive value in the email domain 
+2nd - if there is, think about how you could engineer a simple feature 
+3rd - evaluate it. 
+4th - add it to train, test and kaggle 
+
+# Cross Tab 
+```{r, warning=FALSE, message=FALSE}
+
+# default fraud rate vs pct fraud by email doman? 
+fraud_email_domains <- train_rd %>%
+  count(EVENT_LABEL, email_domain) %>%
+  pivot_wider(id_cols = email_domain, values_from = n, values_fill = 0, names_from=EVENT_LABEL) %>%
+  mutate(pct_fraud = fraud/(fraud+legit)) %>%
+  filter(pct_fraud > 0.1 & (fraud+legit) > 10)
+
+fraud_email_domains
+```
+## Now you have to prepare train, test and kaggle with that feature 
+```{r, warning=FALSE, message=FALSE}
+
+
+train_w_feature <- train_rd %>% left_join(fraud_email_domains %>% 
+                                         dplyr::select(email_domain, pct_fraud)) %>% 
+  mutate(pct_fraud = replace_na(pct_fraud,0))
+
+train_w_feature
+
+test_w_feature <- test_rd %>% left_join(fraud_email_domains %>% 
+                                         dplyr::select(email_domain, pct_fraud)) %>% 
+  mutate(pct_fraud = replace_na(pct_fraud,0))
+
+test_w_feature
+
+kaggle_w_feature <- kaggle %>% left_join(fraud_email_domains %>% 
+                                        dplyr:: select(email_domain, pct_fraud)) %>% 
+  mutate(pct_fraud = replace_na(pct_fraud,0))
+
+kaggle_w_feature
+```
+
+```{r, warning=FALSE, message=FALSE}
+model_recipe2 <- recipe(EVENT_LABEL ~ account_age_days + 
+                         transaction_amt + 
+                         transaction_adj_amt + 
+                         historic_velocity + pct_fraud +
+                         currency,data = train_w_feature) %>% 
+  step_impute_median(all_numeric_predictors()) %>% # replace numeric missing values 
+  step_novel(all_nominal_predictors()) %>%         # handle new levels 
+  themis::step_downsample(EVENT_LABEL, under_ratio = 3) %>% 
+  step_unknown(all_nominal_predictors()) %>%       # replace category missing values 
+  step_other(all_nominal_predictors(),threshold = 0.1) %>%  # pool rarely occuring levels 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) # onehot encode 
+
+bake(model_recipe %>% prep(), train_w_feature %>% sample_n(1000))
+  
+
+rf_model2 <- rand_forest(trees = 100, min_n = 20) %>%
+   set_mode("classification") %>%
+   set_engine("ranger", num.threads = 5, max.depth = 10, importance="permutation")
+
+rf_workflow2 <- workflow() %>%
+  add_recipe(model_recipe2) %>%
+  add_model(rf_model2) %>%
+  fit(train_w_feature)
+
+rf_workflow2
+
+rf_workflow2 %>%
+  pull_workflow_fit() %>%
+  vip(10)
+```
+
+```{r, warning=FALSE, message=FALSE}
+email_recipe <- recipe(EVENT_LABEL ~ email_domain,data = train_rd) %>% 
+  #step_impute_median(all_numeric_predictors()) %>% # replace numeric missing values 
+  step_novel(all_nominal_predictors()) %>%         # handle new levels 
+  themis::step_downsample(EVENT_LABEL, under_ratio = 3) %>% 
+  step_unknown(all_nominal_predictors()) %>%       # replace category missing values 
+  step_other(all_nominal_predictors(),threshold = 10) %>%  # pool rarely occuring levels 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) # onehot encode 
+
+bake(email_recipe %>% prep(), train_rd %>% sample_n(1000))
+
+email_model <- logistic_reg() %>%
+   set_mode("classification") %>%
+   set_engine("glm")
+
+email_workflow <- workflow() %>%
+  add_recipe(email_recipe) %>%
+  add_model(email_model) %>%
+  fit(train)
+
+tidy(email_workflow) %>%
+  mutate_if(is.numeric,round,3) %>%
+  filter(p.value < 0.05)
+```
