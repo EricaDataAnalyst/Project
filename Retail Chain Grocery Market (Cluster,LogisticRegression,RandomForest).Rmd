@@ -607,7 +607,7 @@ coefficients(logit_mod)
 
 ```
 
-### -  try a diff tree 
+### - try a diff tree 
 ```{r, warning=FALSE, message=FALSE}
 mkt_tree2 <- decision_tree(mode="classification",
                             cost_complexity = 0.0001,

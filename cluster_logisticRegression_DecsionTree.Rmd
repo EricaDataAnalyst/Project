@@ -608,11 +608,9 @@ options(scipen = 0)
 
 rpart.plot(donation_tree2$fit, fallen.leaves = TRUE, roundint=FALSE,cex = 0.4, extra=3)
 
-
 ```
 
 ## Prep for Evaluation (donation tree)
-
 
 ```{r, warning=FALSE, message=FALSE}
 
