@@ -9,8 +9,6 @@ output: html_document
 # load libraries / install packages
 
 ```{r, warning=FALSE, message=FALSE}
-
-
 library(tidyverse)
 library(tidymodels)
 library(janitor)
@@ -31,12 +29,10 @@ library(writexl)
 #install.packages("factoextra")
 library(factoextra)
 library(rpart.plot)
-
 ```
 
 
 # Read data 
-
 ```{r, warning=FALSE, message=FALSE}
 donationn <- read_csv("C:/Users/16179/Downloads/my_R_Project/Donations.csv")%>% clean_names()
 head(donationn) 
@@ -54,7 +50,6 @@ skim(donor)
 #skim 
 #Remove variables with more than 10% missing values
 #Remove categorical variables with too many levels of data
-
 ```{r, warning=FALSE, message=FALSE}
 donation <- donationn%>%
   inner_join(donor, by=c("projectid" = "projectid")) %>%
@@ -87,7 +82,7 @@ donation %>%
 ```
 
 
-#scale data
+#scale data for further clustering
 ```{r, warning=FALSE, message=FALSE}
 
 dontation_s <- donation
@@ -411,8 +406,6 @@ ggplot(dontation_s,aes(grade_level))+geom_bar()+facet_wrap(~clusters7$cluster)
 ggplot(dontation_s,aes(is_exciting))+geom_bar()
 ggplot(dontation_s,aes(is_exciting))+geom_bar()+facet_wrap(~clusters7$cluster)
 #+ labels(paste0(rounded , "%"))
-
-
 
 ```
 
