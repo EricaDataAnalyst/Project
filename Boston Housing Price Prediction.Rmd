@@ -641,7 +641,6 @@ You should have one best and two worst predictions
 2. the properties that you over-estimate the value of 
 3. the properties that are your best-estimate 
 #may not be appropriate for certain location/yr_built/price range
-
 ```{r, warning=FALSE, message=FALSE}
 # best estimate 
 bind_cols(predict(xgb_wflow,test),test) %>%
