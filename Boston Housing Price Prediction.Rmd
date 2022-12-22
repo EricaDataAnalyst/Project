@@ -1,0 +1,694 @@
+## Library
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)  
+library(tidymodels)  
+library(janitor)     
+library(skimr)       
+library(vip)         
+library(themis)      
+library(doParallel)
+library(parallel)
+library(scales)
+
+```
+
+## Data
+```{r, warning=FALSE, message=FALSE}
+boston <- read_csv("C:/Users/16179/Downloads/my_R_Project/boston_train.csv",  na = c("null", "nan", "","NA")) %>% clean_names()
+kaggle <- read_csv("C:/Users/16179/Downloads/my_R_Project/boston_holdout.csv",  na = c("null", "nan", "","NA"))%>% clean_names()
+#zips   <- read_csv("challenge-3/zips.csv") %>% clean_names()
+
+boston %>% skim()
+
+```
+
+
+# Histogram Target
+```{r, warning=FALSE, message=FALSE}
+
+options(scipen = 999)
+ggplot(boston, aes(x = av_total)) + 
+  geom_histogram(bins = 50, col= "white") +
+  labs(title=" Sale Price")
+
+ggplot(boston, aes(x = av_total)) + 
+  geom_histogram(bins = 50, col= "white") +
+  scale_x_log10() +
+  labs(title="Histogram Log of Sale Price")
+
+
+```
+
+
+#explore categorical variables by counting freqs
+```{r, warning=FALSE, message=FALSE}
+boston %>%
+ggplot(aes(x= r_ovrall_cnd, y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_ovrall_cnd and av_total", x= "r_ovrall_cnd", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=own_occ , y= av_total))+
+  geom_boxplot()+
+  labs(title = "own_occ and av_total", x= "own_occ", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=structure_class , y= av_total))+
+  geom_boxplot()+
+  labs(title = "structure_class and av_total", x= "structure_class", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_bldg_styl , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_bldg_styl and av_total", x= "r_bldg_styl", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_roof_typ , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_roof_typ and av_total", x= "r_roof_typ", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_ext_fin , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_ext_fin and av_total", x= "r_ext_fin", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_ext_cnd , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_ext_cnd and av_total", x= "r_ext_cnd", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_bth_style , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_bth_style and av_total", x= "r_bth_style", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_kitch_style , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_kitch_style and av_total", x= "r_kitch_style", Y= "av_total")
+
+boston %>%
+ggplot(aes(x= r_heat_typ, y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_heat_typ and av_total", x= "r_heat_typ", Y= "av_total")
+
+boston %>%
+ggplot(aes(x= r_ac, y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_ac and av_total", x= "r_ac", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_int_cnd , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_int_cnd and av_total", x= "r_int_cnd", Y= "av_total")
+
+boston %>%
+ggplot(aes(x= r_int_fin, y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_int_fin and av_total", x= "r_int_fin", Y= "av_total")
+
+boston %>%
+ggplot(aes(x=r_view , y= av_total))+
+  geom_boxplot()+
+  labs(title = "r_view and av_total", x= "r_view", Y= "av_total")
+
+boston %>%
+ggplot(aes(x= zip, y= av_total))+
+  geom_boxplot()+
+  labs(title = "zip and av_total", x= "zip", Y= "av_total")
+
+boston %>%
+ggplot(aes(x= city_state, y= av_total))+
+  geom_boxplot()+
+  labs(title = "city_state and av_total", x= "city_state", Y= "av_total")
+
+year <- boston%>%
+  ggplot(aes(x=yr_built, y= av_total))+
+  geom_col()+
+  labs(title = "Year built and av_total", x = "Year built", Y = "av_total")+
+  coord_cartesian(xlim=c(1850,2020))
+year
+
+boston %>%
+  group_by(yr_built)%>%
+  summarise(n = n())
+
+
+boston %>%
+  dplyr::select(yr_built, av_total)%>%
+  group_by(yr_built) %>%
+  summarise(sum_price_yr = sum(av_total),n = n()) %>%
+  mutate(avg_price = sum_price_yr/n)%>%
+  ggplot(aes(x= yr_built, y= avg_price))+
+  geom_line()+
+  labs(title = "Year built and Avg House Price", x = "Year built", Y = "Avg House price")+
+  coord_cartesian(xlim=c(1900,2020))
+
+boston%>%
+  ggplot(aes(x=yr_remod, y= av_total))+
+  geom_col()+
+  labs(title = "Year remod and av_total", x = "Year remod", Y = "av_total")+
+  coord_cartesian(xlim=c(1900,2020), ylim=c(0,150000000))
+
+boston %>%
+  group_by(yr_remod)%>%
+  summarise(c = n())
+
+
+boston %>%
+  dplyr::select(yr_remod, av_total)%>%
+  group_by(yr_remod) %>%
+  summarise(sum_price_yr = sum(av_total),c = n()) %>%
+  mutate(avg_price = sum_price_yr/c)%>%
+  ggplot(aes(x= yr_remod, y= avg_price))+
+  geom_line()+
+  labs(title = "Year Remod and Avg House Price", x = "Year Remod", Y = "Avg House price")+
+  coord_cartesian(xlim=c(1900,2020))
+
+```
+
+
+
+#explore numeric varibables& correlation between numeric variables
+```{r, warning=FALSE, message=FALSE}
+num <- boston %>%
+select_if(is.numeric) %>%
+  pivot_longer(1:10, names_to = "column", values_to="value") %>%
+  group_by(column) %>%
+  summarise(n=n(),
+            n_distinct = n_distinct(value),
+            n_null = sum(is.na(value)),
+            mean = round(mean(value, na.rm=TRUE),2),
+             median = median(value, na.rm=TRUE),
+              min = min(value, na.rm=TRUE),
+              max = max(value, na.rm=TRUE),
+              sd = sd(value, na.rm=TRUE)
+            )
+num
+
+examine <- na.omit(subset(boston, select = c(av_total, land_sf, yr_built, yr_remod, living_area, r_fplace, num_floors, r_full_bth, r_half_bth, r_total_rms, r_bdrms, population, pop_density, median_income)))
+
+exlude_cor <- cor(examine)
+round(exlude_cor, 2)
+```
+
+
+
+
+## Partition our data 70/30 PLUS make K-Fold Cross Validation
+
+Split the data 70 % train, 30% test, then make a 5 or 10 fold dataset from the test set. 
+
+```{r, warning=FALSE, message=FALSE}
+
+#set seed for repeatability
+set.seed(123)
+
+# Save the split information for an 70/30 split of the data
+bsplit <- initial_split(boston, prop = 0.70)
+train <- training(bsplit) 
+test  <-  testing(bsplit)
+
+# Kfold cross validation
+kfold_splits <- vfold_cv(train, v=5)
+
+
+```
+
+## Recipe 
+
+
+```{r, warning=FALSE, message=FALSE}
+#created new age variable and removed it, imputed with the median
+# write out the formula 
+boston_recipe <-
+  recipe(av_total ~ 
+           living_area +
+           median_income+ 
+           land_sf + 
+           r_ovrall_cnd+ 
+           yr_built + 
+           num_floors + 
+           r_bldg_styl+
+           r_ext_fin+ 
+           r_bth_style+ 
+           r_kitch_style+
+           r_ext_cnd+
+           r_int_fin+ 
+           r_int_cnd+ 
+           r_view+ 
+           zip+ 
+           city_state+ 
+           r_total_rms+ 
+           r_bdrms+ 
+           r_full_bth+ 
+           r_half_bth+ 
+           pop_density+ 
+           population+ 
+           r_fplace+
+           yr_remod+
+           r_kitch+
+           r_heat_typ+
+           r_ac+
+           own_occ+
+           structure_class
+           , data = train) %>%
+  step_mutate(age = 2022 - yr_built ) %>% 
+  step_rm(yr_built) %>%
+  step_impute_median(all_numeric_predictors()) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_unknown(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>% 
+  step_nzv(all_predictors()) 
+
+#going to get warnings for linear regression because of one hot encoding
+#machine learning models only operate on numeric data - so categorical needs to be converted and deal with missing values -- everything has to be a number
+# do not make av total a factor -- target variable needs to be continous
+
+## Check the recipe results m
+bake(boston_recipe %>% prep(),train %>% sample_n(1000))
+
+```
+
+
+## Linear Reg Setup 
+
+Linear regression there is really nothing to tune unless you want to get fancy. this is your baseline model that you should compare your work against. 
+
+```{r, warning=FALSE, message=FALSE}
+
+lm_model <- linear_reg() %>%
+  set_engine("lm") %>% #could do glm
+  set_mode("regression") %>% 
+  translate()
+
+lm_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(lm_model) %>%
+  fit(train)
+
+##age is not significant, remove insignificant variables if we want but not super important
+
+tidy(lm_wflow) %>%
+  mutate_if(is.numeric,round,4)
+
+lm_wflow %>%
+  pull_workflow_fit() %>%
+  vi()
+
+lm_wflow %>%
+  pull_workflow_fit() %>%
+  vi() %>%
+  mutate(Importance = if_else(Sign == "NEG", -Importance, Importance)) %>%
+  ggplot(aes(reorder(Variable, Importance), Importance, fill = Sign)) +
+  geom_col()+ coord_flip()+
+  labs(title = "Linear Model Importance")
+
+#.pred is numeric prediction
+  
+bind_cols(
+  predict(lm_wflow,train, type="numeric"), train) %>% 
+#  mutate(part="train")-> score_lm_train
+  metrics(av_total,.pred)
+
+
+bind_cols(
+  predict(lm_wflow,test), test) %>% 
+#  mutate(part="test")-> score_lm_test
+  metrics(av_total,.pred)
+  
+#bind_rows(score_lm_train, score_lm_test)%>%
+#  group_by(part)%>%
+#  metrics(av_total, .pred)%>%
+#  pivot_wider(id_cols = part, names_from = .metric, values_from = .estimate)
+
+#make above benchmark by adding variables
+
+```
+#random forest: 20-30 trees, vi()method filter out trash
+
+
+```{r, warning=FALSE, message=FALSE}
+
+rf_model <- rand_forest(trees=tune(), min_n=tune()) %>%
+  
+  set_engine("ranger",
+             importance="permutation") %>%
+  set_mode("regression")
+
+
+rf_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(rf_model)
+
+
+rf_search_res <- rf_wflow %>% 
+  tune_bayes(
+    resamples = kfold_splits,
+    # Generate five at semi-random to start
+    initial = 5,
+    iter = 10, 
+    # How to measure performance?
+    metrics = metric_set(rmse, rsq),
+    control = control_bayes(no_improve = 5, verbose = TRUE)
+  )
+```
+
+
+## Tuning Grid Setup
+```{r, warning=FALSE, message=FALSE}
+
+# -- rf grid 
+rf_regular_grid <- grid_regular(trees(c(10,100)),
+                          min_n(c(5,100)),
+                          levels = 3)
+
+print(rf_regular_grid)
+
+# -- setup your tuning grid -- random force 
+rf_random_grid <- grid_random(trees(c(10,200)),
+                         min_n(c(5,100)),
+                          size = 10)
+print(rf_random_grid)
+
+```
+
+## Tuning Run Regular 
+```{r, warning=FALSE, message=FALSE}
+
+# -- train!! K times for each parameter -- 
+rf_tuning_results_regular <- tune_grid(
+    rf_wflow,
+    resamples = kfold_splits,
+    grid = rf_regular_grid
+    #control = control_resamples(save_pred = TRUE)
+    )
+
+rf_tuning_results_regular
+```
+
+
+## Tuning Run Random 
+```{r, warning=FALSE, message=FALSE}
+
+# -- train!! K times for each parameter -- 
+rf_tuning_results_random <- 
+  tune_grid(
+    rf_wflow,
+    resamples = kfold_splits,
+    grid = rf_random_grid
+   # control = control_resamples(save_pred = TRUE)
+    )
+
+rf_tuning_results_random
+```
+
+
+## Review Tuning Results 
+
+```{r, warning=FALSE, message=FALSE}
+## -- results of tuning -- 
+rf_tuning_results_regular %>% 
+  collect_metrics() %>%
+  mutate_if(is.numeric, round,3) %>% 
+  pivot_wider(names_from = .metric, values_from=c(mean, std_err))
+
+rf_best_rmse <- rf_tuning_results_regular %>%
+  select_best("rmse")
+rf_best_rmse
+## -- results of tuning -- 
+rf_tuning_results_random %>% 
+  collect_metrics() %>%
+  mutate_if(is.numeric, round,3) %>% 
+  pivot_wider(names_from = .metric, values_from=c(mean, std_err))
+
+rf_best_rmse_rand <- rf_tuning_results_random %>%
+  select_best("rmse")
+rf_best_rmse_rand
+```
+#final fit
+```{r, warning=FALSE, message=FALSE}
+#regular
+rf_final_wf <- rf_wflow %>% 
+  finalize_workflow(rf_best_rmse)
+rf_final_wf
+
+rf_final_fit  <- rf_final_wf %>%
+  fit(data = train) 
+rf_final_fit
+
+```
+#evaluate
+```{r, warning=FALSE, message=FALSE}
+bind_cols(
+  predict(rf_final_fit,train), train) %>% 
+  metrics(av_total,.pred)
+
+bind_cols(
+  predict(rf_final_fit,test), test) %>% 
+  metrics(av_total,.pred)
+```
+
+## EVALUATE 
+```{r, warning=FALSE, message=FALSE}
+## - visualize 
+rf_tuning_results_regular %>%
+  collect_metrics() %>%
+  mutate_if(is.numeric, round,3) %>%
+  ggplot(aes(trees, mean, )) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  labs(title="impact of trees =")
+
+rf_tuning_results_regular %>%
+  collect_metrics()  %>%
+  mutate_if(is.numeric, round,3) %>%
+  ggplot(aes(min_n, mean, )) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  labs(title="impact of min_n = ")
+
+## - visualize 
+rf_tuning_results_random %>%
+  collect_metrics() %>%
+  mutate_if(is.numeric, round,3) %>%
+  ggplot(aes(trees, mean, )) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  labs(title="impact of trees =")
+
+rf_tuning_results_random %>%
+  collect_metrics()  %>%
+  mutate_if(is.numeric, round,3) %>%
+  ggplot(aes(min_n, mean, )) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  labs(title="impact of min_n = ")
+
+```
+
+
+## KAGGLE——export
+
+```{r, warning=FALSE, message=FALSE}
+bind_cols(predict(rf_final_fit,kaggle),kaggle) %>%
+  dplyr::select(pid,av_total = .pred)%>%
+  write_csv("kaggle3_rf.csv")
+
+```
+
+
+
+#vi: how impactors influence the av_total and what's importance
+
+## XGBoost Model Buiding
+
+Here we want to TUNE our XGB model using the bayes method. 
+
+```{r, warning=FALSE, message=FALSE}
+
+xgb_model <- boost_tree(trees=tune(), 
+                        learn_rate = tune(),
+                        tree_depth = tune()) %>%
+  set_engine("xgboost",
+             importance="permutation") %>%
+  set_mode("regression")
+
+
+xgb_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(xgb_model)
+
+
+xgb_search_res <- xgb_wflow %>% 
+  tune_bayes(
+    resamples = kfold_splits,
+    # Generate five at semi-random to start
+    initial = 5,
+    iter = 60, 
+    # How to measure performance?
+    metrics = metric_set(rmse, rsq),
+    control = control_bayes(no_improve = 10, verbose = TRUE)
+  )
+```
+
+
+## XGB Tuning 
+Evaluate the tuning efforts 
+
+```{r, warning=FALSE, message=FALSE}
+# Experiments 
+xgb_search_res %>%
+  collect_metrics()%>%
+  filter(.metric == "rmse")
+
+# Graph of learning rate 
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(learn_rate, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+# graph of tree depth 
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(tree_depth, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+# graph of number of trees 
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(trees, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+```
+
+## Final Fit  XGB
+
+Finally fit the XGB model using the best set of parameters 
+
+```{r, warning=FALSE, message=FALSE}
+
+
+lowest_xgb_rmse <- xgb_search_res %>%
+  select_best("rmse")
+lowest_xgb_rmse
+
+xgb_wflow <- finalize_workflow(
+  xgb_wflow, lowest_xgb_rmse
+) %>% 
+  fit(train)
+
+```
+
+## VIP , permutation
+What variables are important 
+```{r, warning=FALSE, message=FALSE}
+xgb_wflow %>%
+  extract_fit_parsnip() %>%
+  vi()
+
+```
+
+## Evaluate the XGBoost BEST Model 
+
+```{r, warning=FALSE, message=FALSE}
+bind_cols(
+  predict(xgb_wflow,train), train) %>% 
+  metrics(av_total,.pred)
+
+bind_cols(
+  predict(xgb_wflow,test), test) %>% 
+  metrics(av_total,.pred)
+```
+
+
+## Best Worst Predicitons 
+
+You should have one best and two worst predictions 
+
+1. the properties that you under-estimate the value of
+2. the properties that you over-estimate the value of 
+3. the properties that are your best-estimate 
+#may not be appropriate for certain location/yr_built/price range
+
+```{r, warning=FALSE, message=FALSE}
+# best estimate 
+bind_cols(predict(xgb_wflow,test),test) %>%
+  mutate(error = av_total - .pred,
+         abs_error = abs(error)) %>% 
+  slice_min(order_by = abs_error,n=10)-> bestesimate
+#summary 
+bestesimate %>% 
+  summarize(
+    mean(error),
+    mean(av_total),
+            mean(yr_built))
+
+#worst under-estimate
+bind_cols(predict(xgb_wflow,test),test)%>%
+  mutate(error = .pred -av_total ,
+         abs_error = abs(error)) %>% 
+  slice_max(order_by = error,n=10) -> underesimate
+
+#summary
+underesimate %>% 
+  summarize(
+    mean(error),
+    mean(av_total),
+            mean(yr_built))
+
+
+# worst over-estimate 
+bind_cols(predict(xgb_wflow,test),test)%>%
+  mutate(error = av_total - .pred,
+         abs_error = abs(error)) %>% 
+  slice_max(order_by = error,n=10) -> overesimate
+
+# summary 
+overesimate %>% 
+  summarize(
+    mean(error),
+    mean(av_total),
+            mean(yr_built))
+```
+
+## KAGGLE 
+
+```{r, warning=FALSE, message=FALSE}
+bind_cols(predict(xgb_wflow,kaggle),kaggle) %>%
+  dplyr::select(pid,av_total = .pred)%>%
+  write_csv("kaggle3.csv")
+
+```
+
