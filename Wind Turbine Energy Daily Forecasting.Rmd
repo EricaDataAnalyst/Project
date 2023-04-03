@@ -1,0 +1,327 @@
+
+## Load Libraries 
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(skimr)
+library(kableExtra)
+library(GGally)
+library(vip)        
+library(fastshap)   
+library(MASS)
+library(ISLR)
+library(tree)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(imputeTS)
+library(urca)
+library(pracma)
+library(fpp2)
+library(astsa)
+library(forecast)
+
+```
+
+## Load Turbine data
+
+```{r, warning=FALSE, message=FALSE}
+turbine <- read_csv("Turbine_Data.csv") %>%
+  clean_names() %>%
+# transfer date format to "date"
+  mutate(date = as.Date(date, format="%m/%d/%Y"))
+
+turbine
+
+# skim for exploring missing values
+skim(turbine)
+
+```
+
+## Plot raw data
+
+```{r, warning=FALSE, message=FALSE}
+# according to the plot, we should accumulate data to daily index to create time series object later
+turbine %>%
+ggplot(aes(x = date, y = active_power)) +
+      geom_point() +
+      labs(title = "Amount of Active Power",
+           subtitle = "Raw Data",
+           y = "Amount of Active Power",
+           x = "Date") 
+
+```
+
+## Data Preparation - Accumulate Using a Daily Index
+
+```{r, warning=FALSE, message=FALSE}
+# 1. ACCUMULATE
+
+turbine_day <- turbine %>%
+  group_by(year, month, day) %>%
+  summarize(sum_active_power = sum(active_power, na.rm=TRUE),
+            avg_ambient_temperature = mean(ambient_temperature, na.rm=TRUE),
+            avg_wind_direction = mean(wind_direction, na.rm=TRUE),
+            avg_wind_speed = mean(wind_speed, na.rm=TRUE))
+head(turbine_day)
+skim(turbine_day)
+
+turbine_day <- subset(turbine_day, select=-c(year, month, day))
+skim(turbine_day)
+
+#since the sum of null values returns 0, we change 0 value to null for impute
+turbine_day[turbine_day == 0] <- NA
+turbine_day
+
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+# 2. Impute Missing value
+
+at_data <- subset(turbine_day, select=c(avg_ambient_temperature))
+at_ts <- ts(at_data, start=c(2017,365), frequency = 365)
+at_tsi <- na_interpolation(at_ts) 
+
+wd_data <- subset(turbine_day, select=c(avg_wind_direction))
+wd_ts <- ts(wd_data, start=c(2017,365), frequency = 365)
+wd_tsi <- na_interpolation(wd_ts) 
+
+ws_data <- subset(turbine_day, select=c(avg_wind_speed))
+ws_ts <- ts(ws_data, start=c(2017,365), frequency = 365)
+ws_tsi <- na_interpolation(ws_ts)
+
+active_data <- subset(turbine_day, select=c(sum_active_power))
+act_ts <- ts(active_data, start=c(2017,365), frequency = 365)
+active_tsi <- na_interpolation(act_ts) 
+
+turbine_clean <- data.frame(daily_active_power= as.vector(active_tsi), daily_wind_direction= as.vector(wd_tsi), daily_ambient_temperature= as.vector(at_tsi),daily_wind_speed= as.vector(ws_tsi) )
+turbine_clean
+
+```
+
+## Exploratory analysis of three x variables
+
+```{r, warning=FALSE, message=FALSE}
+# according to the patterns of three plots below, we assume all three variables has some correlations with "active power;" we will do more test for them when we run "Arima" model later
+
+ggplot(turbine_clean, aes(x=daily_ambient_temperature, y=daily_active_power)) + geom_point() + labs(title = "Daily avg ambient temperature") 
+ggplot(turbine_clean, aes(x=daily_wind_direction, y=daily_active_power)) + geom_point() + labs(title = "Daily avg wind direction") 
+ggplot(turbine_clean, aes(x=daily_wind_speed, y=daily_active_power)) + geom_point() + labs(title = "Daily avg wind speed") 
+
+```
+
+## An overview/visual summary of the data that were used to generate the forecast - "Create a time series object for the data"
+
+```{r,warning=FALSE}
+
+# Create time series object and plot time series
+
+ts_prep <- subset(turbine_clean, select=c(daily_active_power))
+turbine_ts <- ts(ts_prep, start=c(2017,365), frequency = 365)
+plot(turbine_ts)
+ggAcf(turbine_ts)
+ggPacf(turbine_ts)
+
+```
+
+
+## ADF test for stationarity
+# Use the Single Mean Version of the Test
+
+```{r}
+
+turbine_df <- ur.df(turbine_ts, type = "drift")
+summary(turbine_df)
+
+```
+
+## Type 1. Seasonal Exponenetial Smoothing Model
+
+```{r, warning=FALSE, message=FALSE}
+# due to "seasonality" from time series and ACF plot, we try to run seasonal expenential smoothing model first to forecast
+
+turbine_ets <- ets(turbine_ts, model="ZNZ")
+summary(turbine_ets)
+checkresiduals(turbine_ets)
+
+forecast(turbine_ets, h=5)
+
+turbine_ets %>% forecast() %>% autoplot()
+
+#relatively high forecast errors (RMSE)
+#residuals are not white noises (According to p-values for Ljung-Box statistic of Residuals, residuals are white noise. H0: white noise; Ha: not white noise. As p-value is smaller than 0.05, we reject null hypothesis, and state residuals are not white noise.)
+#flat pattern on forecast plot (forecast values) for all five forecast days
+#this is not a good model for for Active Power generation for the turbine for the next 5 day period 
+
+```
+
+
+
+## Type 2. "Arima" Method Models
+# Model 1 - Fit a regression model (including only the explanatory variables)
+# ----Examine the residuals to determine Which explanatory variables are important?
+
+```{r, warning=FALSE, message=FALSE}
+
+# set p, d, q=0, xreg= linear model
+fit1_AR <- sarima(turbine_ts, 0, 0, 0, xreg=turbine_clean[,2:4]) #matrix of all variables
+summary(fit1_AR)
+fit1_AR
+
+## ----Check p-value and drop insignificant, in this case, all explanatory variables are significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of all explanatory variables are smaller than 0.05, we reject null hypothesis, and state they are significant.)
+
+#ACF some significant doesn't capture
+#residuals are not white noise
+#this is not a good model for forecasting
+
+```
+
+# Model 2 - AR(1) with 3 Explanatory Variables (Ambient Termperature & Wind Direction & Wind Speed)
+
+```{r, warning=FALSE, message=FALSE}
+# According to ACF and PACF plots, ACF decays to zero, PACF drops quickly and have some significant values; start with AR(1) for ARIMA model, set p = 1
+# to see significance of terms and whether residuals are white noises (residuals' plots)
+
+fit2_AR3 <- sarima(turbine_ts, 1, 0, 0, xreg=turbine_clean[,2:4])
+summary(fit2_AR3)
+fit2_AR3
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Create matrix of covariates for next 5 time periods
+xdat <- c(32.25, 142.25, 5.73, 35.59, 331.22, 4.03, 34.68,295.51, 3.88, 33.44,239.83, 5.01, 34.06,279.92, 4.51)
+xdat1 <- matrix(xdat,nrow=5,ncol=3,byrow=TRUE)
+
+xregmat = as.matrix(turbine_clean[,2:4])
+
+# re-run model with Arima and produce forecast for next 5 time periods 
+
+fit2_v2 <- Arima(turbine_ts, order=c(1, 0, 0), xreg=xregmat) #only works for matrix
+
+#Arima could forecast variable
+
+forecast(fit2_v2, xreg = xdat1,#value for the next 5 time period
+         h = 5)
+autoplot(forecast(fit2_v2, xreg=xdat1, h=5))
+
+summary(fit2_v2)
+
+
+#daily_wind_direction is not significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of dailt wind direction is bigger than 0.05, we fail to reject null hypothesis, and state it is insignificant.)
+#ar term is significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of ar1 is smaller than 0.05, we reject null hypothesis, and state ar term is insignificant.)
+#not too much significant in acf
+#but not quite white noise (According to p-values for Ljung-Box statistic and ACF of Residuals, the residuals are not white noise. H0: white noise; Ha: not white noise. i. Not all lags within the confidence bands, supporting that not all residuals are white noise. ii. Not all p-value points are above the alpha = 0.05 line, the residuals are not all white noises.)
+#forecast plot pattern are too high the previous data, not reasonable pattern
+#not the lowest forecast error
+#this is not a good model for for Active Power generation for the turbine for the next 5 day period
+
+```
+
+# Model 3 - AR(1) with 2 Explanatory Variables (Ambient Termperature & Wind Direction)
+
+```{r, warning=FALSE, message=FALSE}
+# Based on Model 2 above, daily_wind_direction is not significant, drop it
+# According to ACF and PACF plots, ACF decays to zero, PACF drops quickly and have some significant values; start with AR(1) for ARIMA model, set p = 1
+# to see significance of terms and whether residuals are white noises (residuals' plots)
+
+xreg_2 <- subset(turbine_clean, select=-c(daily_wind_direction))
+
+fit3_AR3 <- sarima(turbine_ts, 1, 0, 0, xreg=xreg_2[,2:3])
+summary(fit3_AR3)
+fit3_AR3
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Create matrix of covariates for next 5 time periods
+xdat <- c(32.25, 5.73, 35.59, 4.03, 34.68, 3.88, 33.44, 5.01, 34.06, 4.51)
+xdat1 <- matrix(xdat,nrow=5,ncol=2,byrow=TRUE)
+
+xregmat = as.matrix(xreg_2[,2:3])
+
+# re-run model with Arima and produce forecast for next 5 time period 
+
+fit3_v2 <- Arima(turbine_ts, order=c(1, 0, 0), xreg=xregmat) #only works for matrix
+#Arima could forecast variable
+
+forecast(fit3_v2, xreg = xdat1,#value for the next 5 time period
+         h = 5)
+autoplot(forecast(fit3_v2, xreg=xdat1, h=5))
+
+summary(fit3_v2)
+
+#all explanatory variables are significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of all explanatory variables are smaller than 0.05, we reject null hypothesis, and state they are significant.)
+#ar term is significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of ar1 is smaller than 0.05, we reject null hypothesis, and state ar term is insignificant.)
+#not too much significant in acf
+#but not quite white noise (According to p-values for Ljung-Box statistic and ACF of Residuals, the residuals are not white noise. H0: white noise; Ha: not white noise. i. Not all lags within the confidence bands, supporting that not all residuals are white noise. ii. Not all p-value points are above the alpha = 0.05 line, the residuals are not all white noises.)
+#not the lowest forecast error
+#this is not a good model for for Active Power generation for the turbine for the next 5 day period
+
+```
+
+# Model 4 - AR(3) with 2 Explanatory Variables (Ambient Termperature & Wind Direction)
+# ----This is our final model. This model has almost all AR terms are significant and all explanotry variables are significant. It also has the lowest forecast error (RMSE). Even if its residuals may not quite be white noise, those residuals are white noise at lower lag. In addition, its forecast pattern on forecast plot (forecast values) for all five forecast days is reasonable. This model is a simpler model. This is the best model for for Active Power generation for the turbine for the next 5 day period.
+
+```{r, warning=FALSE, message=FALSE}
+# According to ACF and PACF plots, ACF decays to zero, PACF drops quickly and have some significant values; try AR(3) for ARIMA model, set p = 3
+# to see significance of terms and whether residuals are white noises (residuals' plots)
+
+fit4_AR1 <- sarima(turbine_ts, 3, 0, 0, xreg=xreg_2[,2:3])
+summary(fit4_AR1)
+fit4_AR1
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Create matrix of covariates for next 5 time periods
+xdat <- c(32.25, 5.73, 35.59, 4.03, 34.68, 3.88, 33.44, 5.01, 34.06, 4.51)
+xdat1 <- matrix(xdat,nrow=5,ncol=2,byrow=TRUE)
+
+xregmat = as.matrix(xreg_2[,2:3])
+
+# re-run model with Arima and produce forecast for next 5 time periods
+
+fit4_v2 <- Arima(turbine_ts, order=c(3, 0, 0), xreg=xregmat) #only works for matrix
+#Arima could forecast variable
+
+# Forecast value for the next 5 time period
+forecast(fit4_v2, xreg = xdat1,
+         h = 5)
+autoplot(forecast(fit4_v2, xreg=xdat1, h=5))
+summary(fit4_v2)
+
+#almost all AR terms are significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of ar1 & ar3 is smaller than 0.05, we reject null hypothesis, and state ar1 & ar3 are significant; ----only one ar term (ar2) is not significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of ar2 is bigger than 0.05, we fail to reject null hypothesis, and state all AR (2) term is insignificant.) 
+#all explanatory variables are significant (Ho: Term is not needed in the model; Ha: Term is needed in the model. As p-value of all explanatory variables are smaller than 0.05, we reject null hypothesis, and state they are significant)
+#has the lowest forecast error (RMSE)
+#residual may not quite be white noise, but white noise at lower lag (According to p-values for Ljung-Box statistic and ACF of Residuals, the lower lag residuals are white noise. H0: white noise; Ha: not white noise. i. All lower lags within the confidence bands, supporting that all lower lags of residuals are white noise. ii. All p-value points of lower lags are above the alpha = 0.05 line, the lower lag residuals are white noises.)
+#pattern on forecast plot (forecast values) for all five forecast days is reasonable
+#this is the best model for for Active Power generation for the turbine for the next 5 day period
+
+```
+
+## Type 3. Compare to auto.arima
+
+```{r, warning=FALSE, message=FALSE}
+
+fit_auto <- auto.arima(turbine_ts)
+summary(fit_auto)
+checkresiduals(fit_auto)
+accuracy(fit_auto)
+
+forecast(fit_auto, h=5)
+
+fit_auto %>% forecast() %>% autoplot()
+
+#relatively high forecast errors (RMSE)
+#residuals are not white noises (According to p-values for Ljung-Box statistic of Residuals, residuals are white noise. H0: white noise; Ha: not white noise. As p-value is smaller than 0.05, we reject null hypothesis, and state residuals are not white noise.)
+#seasonality pattern on forecast plot (forecast values) for all five forecast days
+#this is not a good model for for Active Power generation for the turbine for the next 5 day period 
+
+```
+
+
